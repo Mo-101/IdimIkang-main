@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 import asyncio
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from config import PAIRS
 from db import get_pool, append_log, append_signal
@@ -113,6 +115,13 @@ async def phase2_output():
     """
     PHASE 2 OUTPUT (MANDATORY STRUCTURE)
     """
+    canonical_results_path = Path(__file__).resolve().parent.parent / "PHASE2_RESULTS.json"
+    if canonical_results_path.exists():
+        try:
+            with canonical_results_path.open("r", encoding="utf-8") as phase2_file:
+                return json.load(phase2_file)
+        except Exception:
+            pass
     return {
         "run_metadata": {"version": "v1.1-tuned", "status": "active" if not KILL_SWITCH_ACTIVE else "halted"},
         "data_integrity": {"open_candles_rejected": True, "pagination_enforced": True},

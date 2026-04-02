@@ -1,0 +1,132 @@
+{
+  "run_metadata": {
+    "logic_version": "v1.1-baseline",
+    "config_version": "v1.1-baseline",
+    "run_timestamp": "2026-04-01T15:59:29.443677+00:00"
+  },
+  "profit_factor": {
+    "BTCUSDT": {
+      "total_trades": 97,
+      "wins": 18,
+      "losses": 77,
+      "expired": 2,
+      "win_rate": 18.95,
+      "profit_factor": 0.7013,
+      "net_r": -23.0,
+      "total_win_r": 54.0,
+      "total_loss_r": 77.0,
+      "expected_pf": 0.7013,
+      "reported_pf": 0.7013,
+      "match": true
+    },
+    "ETHUSDT": {
+      "total_trades": 89,
+      "wins": 19,
+      "losses": 69,
+      "expired": 1,
+      "win_rate": 21.59,
+      "profit_factor": 0.8261,
+      "net_r": -12.0,
+      "total_win_r": 57.0,
+      "total_loss_r": 69.0,
+      "expected_pf": 0.8261,
+      "reported_pf": 0.8261,
+      "match": true
+    },
+    "SOLUSDT": {
+      "total_trades": 102,
+      "wins": 25,
+      "losses": 76,
+      "expired": 1,
+      "win_rate": 24.75,
+      "profit_factor": 0.9868,
+      "net_r": -1.0,
+      "total_win_r": 75.0,
+      "total_loss_r": 76.0,
+      "expected_pf": 0.9868,
+      "reported_pf": 0.9868,
+      "match": true
+    },
+    "AGGREGATE": {
+      "total_trades": 288,
+      "wins": 62,
+      "losses": 222,
+      "expired": 4,
+      "win_rate": 21.83,
+      "profit_factor": 0.8378,
+      "net_r": -36.0,
+      "total_win_r": 186.0,
+      "total_loss_r": 222.0,
+      "expected_pf": 0.8378,
+      "reported_pf": 0.8378,
+      "match": true
+    }
+  },
+  "signal_frequency": {
+    "BTCUSDT": {
+      "total_signals": 97,
+      "signals_per_day": 1.08
+    },
+    "ETHUSDT": {
+      "total_signals": 89,
+      "signals_per_day": 0.99
+    },
+    "SOLUSDT": {
+      "total_signals": 102,
+      "signals_per_day": 1.13
+    },
+    "AGGREGATE": {
+      "total_signals": 288,
+      "signals_per_day": 3.2
+    }
+  },
+  "regime_analysis": {
+    "DOWNTREND": {
+      "wins": 53,
+      "losses": 181,
+      "expired": 4,
+      "pnl_r": -22.0,
+      "signals": 238,
+      "win_rate": 22.65,
+      "profit_factor": 0.8785,
+      "expected_pf": 0.8785,
+      "match": true
+    },
+    "UPTREND": {
+      "wins": 3,
+      "losses": 24,
+      "expired": 0,
+      "pnl_r": -15.0,
+      "signals": 27,
+      "win_rate": 11.11,
+      "profit_factor": 0.375,
+      "expected_pf": 0.375,
+      "match": true
+    },
+    "RANGING": {
+      "wins": 6,
+      "losses": 17,
+      "expired": 0,
+      "pnl_r": 1.0,
+      "signals": 23,
+      "win_rate": 26.09,
+      "profit_factor": 1.0588,
+      "expected_pf": 1.0588,
+      "match": true
+    }
+  },
+  "evidence_integrity": {
+    "signals_generated": 288,
+    "signals_evaluated": 288,
+    "expired_unresolved": 4
+  },
+  "determinism_audit": {
+    "status": "PASS",
+    "match_rate": "100%"
+  },
+  "overall_verdict": {
+    "status": "FAIL",
+    "aggregate_pf": 0.8378,
+    "signals_per_day": 3.2
+  }
+}

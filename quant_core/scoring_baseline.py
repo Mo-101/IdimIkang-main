@@ -1,8 +1,7 @@
 import pandas as pd
 from datetime import datetime, timezone
 from config import (LOGIC_VERSION, CONFIG_VERSION, MIN_SIGNAL_SCORE,
-                    COOLDOWN_BARS, ATR_SL_MULTIPLIER, ATR_TP_MULTIPLIER,
-                    VOLUME_RATIO_MIN, MAX_SIGNALS_PER_PAIR_PER_DAY, REGIME_WEIGHTS)
+                    COOLDOWN_BARS, BLOCK_STRONG_UPTREND, ATR_SL_MULTIPLIER, ATR_TP_MULTIPLIER, REGIME_WEIGHTS)
 
 def score_long_signal(df_15m: pd.DataFrame, regime: dict):
     score = 0.0
@@ -13,15 +12,15 @@ def score_long_signal(df_15m: pd.DataFrame, regime: dict):
     volume = latest['volume']
     vol_sma = latest['volume_sma_20']
     
-    # Volume Confirmation (Mandatory)
-    if pd.isna(vol_sma) or vol_sma <= 0:
-        return 0.0, {"volume_filter": "No volume SMA"}
-    vol_ratio = volume / vol_sma
-    if vol_ratio < VOLUME_RATIO_MIN:
-        return 0.0, {"volume_filter": f"Ratio {vol_ratio:.2f} < {VOLUME_RATIO_MIN}"}
-    
-    score += 15
-    reasons["volume_confirmation"] = round(vol_ratio, 2)
+    # Volume Confirmation (Soft contributor)
+    vol_ratio = 0.0
+    if not pd.isna(vol_sma) and vol_sma > 0:
+        vol_ratio = volume / vol_sma
+        if vol_ratio >= 1.1:
+            score += 15
+            reasons["volume_confirmation"] = round(vol_ratio, 2)
+        else:
+            reasons["volume_confirmation"] = round(vol_ratio, 2)
 
     # EMA Alignment (+20)
     ema_aligned = False
@@ -47,17 +46,20 @@ def score_long_signal(df_15m: pd.DataFrame, regime: dict):
         score += 10
         reasons["macd_alignment"] = True
 
-    # Regime weighting (±20)
+    # Regime blocking (pre-scoring veto)
     regime_name = regime['regime']
+    if BLOCK_STRONG_UPTREND and regime_name == "STRONG_UPTREND":
+        return 0.0, {"regime_block": "STRONG_UPTREND blocked"}
+    
+    # Regime weighting (±20)
     weight = REGIME_WEIGHTS.get(regime_name, 0)
     regime_score = weight * 10
     score += regime_score
     reasons["regime_weight"] = regime_score
 
-    # Hard scoring rule
+    # EMA misalignment veto (hard rule)
     if not ema_aligned:
-        score = min(score, 60)
-        reasons["score_cap"] = "EMA alignment missing"
+        return 0.0, {"ema_veto": "EMA alignment missing"}
 
     reasons["final_score"] = score
     return score, reasons
@@ -71,15 +73,15 @@ def score_short_signal(df_15m: pd.DataFrame, regime: dict):
     volume = latest['volume']
     vol_sma = latest['volume_sma_20']
     
-    # Volume Confirmation (Mandatory)
-    if pd.isna(vol_sma) or vol_sma <= 0:
-        return 0.0, {"volume_filter": "No volume SMA"}
-    vol_ratio = volume / vol_sma
-    if vol_ratio < VOLUME_RATIO_MIN:
-        return 0.0, {"volume_filter": f"Ratio {vol_ratio:.2f} < {VOLUME_RATIO_MIN}"}
-    
-    score += 15
-    reasons["volume_confirmation"] = round(vol_ratio, 2)
+    # Volume Confirmation (Soft contributor)
+    vol_ratio = 0.0
+    if not pd.isna(vol_sma) and vol_sma > 0:
+        vol_ratio = volume / vol_sma
+        if vol_ratio >= 1.1:
+            score += 15
+            reasons["volume_confirmation"] = round(vol_ratio, 2)
+        else:
+            reasons["volume_confirmation"] = round(vol_ratio, 2)
 
     # EMA Alignment (+20)
     ema_aligned = False
@@ -105,18 +107,21 @@ def score_short_signal(df_15m: pd.DataFrame, regime: dict):
         score += 10
         reasons["macd_alignment"] = True
 
+    # Regime blocking (pre-scoring veto)
+    regime_name = regime['regime']
+    if BLOCK_STRONG_UPTREND and regime_name == "STRONG_UPTREND":
+        return 0.0, {"regime_block": "STRONG_UPTREND blocked"}
+    
     # Regime weighting (±20)
     # For short, we invert the weight. STRONG_DOWNTREND is -2, so -(-2)*10 = +20.
-    regime_name = regime['regime']
     weight = REGIME_WEIGHTS.get(regime_name, 0)
     regime_score = -weight * 10
     score += regime_score
     reasons["regime_weight"] = regime_score
 
-    # Hard scoring rule
+    # EMA misalignment veto (hard rule)
     if not ema_aligned:
-        score = min(score, 60)
-        reasons["score_cap"] = "EMA alignment missing"
+        return 0.0, {"ema_veto": "EMA alignment missing"}
 
     reasons["final_score"] = score
     return score, reasons
@@ -133,12 +138,7 @@ def generate_signals(pair: str, df_15m: pd.DataFrame, regime: dict, last_signal_
         return []
 
     ts = datetime.fromtimestamp(latest['close_time'] / 1000.0, tz=timezone.utc)
-    day_key = f"{pair}:{ts.strftime('%Y-%m-%d')}"
-    current_daily_count = daily_signal_counts.get(day_key, 0)
-
-    if current_daily_count >= MAX_SIGNALS_PER_PAIR_PER_DAY:
-        return []
-
+    
     signals = []
     
     # LONG
@@ -166,7 +166,6 @@ def generate_signals(pair: str, df_15m: pd.DataFrame, regime: dict, last_signal_
                 "config_version": CONFIG_VERSION
             })
             last_signal_bars[cooldown_key] = current_bar_index
-            daily_signal_counts[day_key] = current_daily_count + 1
             return signals
 
     # SHORT
@@ -194,6 +193,5 @@ def generate_signals(pair: str, df_15m: pd.DataFrame, regime: dict, last_signal_
                 "config_version": CONFIG_VERSION
             })
             last_signal_bars[cooldown_key] = current_bar_index
-            daily_signal_counts[day_key] = current_daily_count + 1
 
     return signals
