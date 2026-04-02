@@ -1,0 +1,86 @@
+{
+  "run_metadata": {
+    "logic_version": "v1.1-final",
+    "config_version": "v1.1-final"
+  },
+  "profit_factor": {
+    "BTCUSDT": {
+      "profit_factor": 1.4483,
+      "win_rate": 32.56,
+      "total_trades": 46
+    },
+    "ETHUSDT": {
+      "profit_factor": 0.5,
+      "win_rate": 14.29,
+      "total_trades": 51
+    },
+    "SOLUSDT": {
+      "profit_factor": 0.7105,
+      "win_rate": 19.15,
+      "total_trades": 49
+    },
+    "AGGREGATE": {
+      "profit_factor": 0.8257,
+      "win_rate": 21.58,
+      "total_trades": 146
+    }
+  },
+  "signal_frequency": {
+    "BTCUSDT": {
+      "total_signals": 46,
+      "signals_per_day": 0.51
+    },
+    "ETHUSDT": {
+      "total_signals": 51,
+      "signals_per_day": 0.57
+    },
+    "SOLUSDT": {
+      "total_signals": 49,
+      "signals_per_day": 0.54
+    },
+    "AGGREGATE": {
+      "total_signals": 146,
+      "signals_per_day": 1.62
+    }
+  },
+  "regime_analysis": {
+    "DOWNTREND": {
+      "wins": 13,
+      "losses": 50,
+      "pnl_r": -11.0,
+      "signals": 68,
+      "win_rate": 20.63,
+      "profit_factor": 0.78
+    },
+    "STRONG_UPTREND": {
+      "wins": 16,
+      "losses": 58,
+      "pnl_r": -10.0,
+      "signals": 75,
+      "win_rate": 21.62,
+      "profit_factor": 0.8276
+    },
+    "UPTREND": {
+      "wins": 1,
+      "losses": 1,
+      "pnl_r": 2.0,
+      "signals": 3,
+      "win_rate": 50.0,
+      "profit_factor": 3.0
+    }
+  },
+  "evidence_integrity": {
+    "signals_generated": 146,
+    "signals_evaluated": 146,
+    "expired_unresolved": 7
+  },
+  "determinism_audit": {
+    "status": "PASS",
+    "match_rate": "100%"
+  },
+  "overall_verdict": {
+    "status": "FAIL",
+    "aggregate_pf": 0.8257,
+    "signals_per_day": 1.62
+  }
+}
