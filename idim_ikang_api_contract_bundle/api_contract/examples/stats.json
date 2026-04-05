@@ -1,0 +1,11 @@
+{
+  "total_signals": 148,
+  "wins": 42,
+  "losses": 101,
+  "expired": 5,
+  "win_rate": 29.58,
+  "profit_factor": 1.2475,
+  "signals_per_day": 3.9,
+  "logic_version": "v1.2-five-cell-observer",
+  "config_version": "v1.2-top30-futures"
+}

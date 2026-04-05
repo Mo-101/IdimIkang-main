@@ -1,0 +1,20 @@
+{
+  "artifact_metadata": {
+    "codex_id": "mo-fin-idim-ikang-001",
+    "artifact_type": "observer_review_bundle"
+  },
+  "aggregate_metrics": {
+    "profit_factor": 1.2019,
+    "win_rate": 28.56,
+    "signals_per_day": 14.12
+  },
+  "per_pair_metrics": [],
+  "per_cell_metrics": [],
+  "determinism": {
+    "passed": true
+  },
+  "config_snapshot": {
+    "logic_version": "v1.0-tuned",
+    "config_version": "v1.0-tuned"
+  }
+}

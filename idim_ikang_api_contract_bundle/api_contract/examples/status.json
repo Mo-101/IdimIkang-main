@@ -1,0 +1,22 @@
+{
+  "service": "idim-api",
+  "scanner_state": "running",
+  "uptime_seconds": 18342.4,
+  "logic_version": "v1.2-five-cell-observer",
+  "config_version": "v1.2-top30-futures",
+  "last_scan_time": "2025-12-31T23:59:00Z",
+  "last_signal": {
+    "pair": "ETHUSDT",
+    "side": "LONG",
+    "score": 60,
+    "regime": "STRONG_UPTREND"
+  },
+  "last_log": {
+    "timestamp": "2025-12-31T23:59:01Z",
+    "level": "INFO",
+    "event": "scan_complete",
+    "details": {
+      "duration_seconds": 1.23
+    }
+  }
+}

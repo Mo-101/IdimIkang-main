@@ -1,0 +1,351 @@
+openapi: 3.1.0
+info:
+  title: Idim Ikang Observer API
+  summary: Doctrine-bound observer API for Idim Ikang live scanning, evidence review, and outcome tracking
+  description: |
+    Idim Ikang is a non-executing observer. This contract exposes only truthful observer,
+    analytics, review, and kill-switch routes. It does not expose order placement,
+    strategy optimization, or portfolio execution endpoints.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8787
+    description: Local WSL2 observer API
+tags:
+  - name: Observer
+    description: Scanner state and control
+  - name: Signals
+    description: Logged observer signals
+  - name: Analytics
+    description: Aggregate stats and cell performance
+  - name: Review
+    description: Review bundle and artifact-oriented outputs
+paths:
+  /status:
+    get:
+      tags: [Observer]
+      summary: Get current observer status
+      operationId: getStatus
+      responses:
+        "200":
+          description: Current scanner and service state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+  /signals:
+    get:
+      tags: [Signals]
+      summary: Get latest observer signals
+      operationId: listSignals
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        "200":
+          description: Latest signals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalsResponse"
+  /stats:
+    get:
+      tags: [Analytics]
+      summary: Get aggregate live observer statistics
+      operationId: getStats
+      responses:
+        "200":
+          description: Aggregate live stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stats"
+  /cell-performance:
+    get:
+      tags: [Analytics]
+      summary: Get performance by regime and score bucket cell
+      operationId: getCellPerformance
+      responses:
+        "200":
+          description: Per-cell performance breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CellPerformanceResponse"
+  /review-bundle:
+    get:
+      tags: [Review]
+      summary: Get review-ready observer bundle
+      operationId: getReviewBundle
+      responses:
+        "200":
+          description: Current review bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewBundle"
+  /kill:
+    post:
+      tags: [Observer]
+      summary: Stop the scanner gracefully
+      operationId: killScanner
+      responses:
+        "200":
+          description: Scanner stop acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KillResponse"
+        "423":
+          description: Kill switch already active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stream:
+    get:
+      tags: [Review]
+      summary: Deferred live stream endpoint
+      description: |
+        This route is documented for future use only. It must not be implemented until
+        there is a reviewed live stream source behind it.
+      operationId: getStreamDeferred
+      responses:
+        "501":
+          description: Not implemented
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    Signal:
+      type: object
+      required:
+        - signal_id
+        - pair
+        - timestamp
+        - side
+        - entry
+        - stop_loss
+        - take_profit
+        - score
+        - score_bucket
+        - regime
+        - reason_trace
+        - logic_version
+        - config_version
+      properties:
+        signal_id:
+          type: string
+          format: uuid
+        pair:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        side:
+          type: string
+          enum: [LONG, SHORT]
+        entry:
+          type: number
+        stop_loss:
+          type: number
+        take_profit:
+          type: number
+        score:
+          type: number
+        score_bucket:
+          type: integer
+        regime:
+          type: string
+        reason_trace:
+          type: object
+          additionalProperties: true
+        logic_version:
+          type: string
+        config_version:
+          type: string
+        outcome:
+          type: string
+          nullable: true
+          enum: [WIN, LOSS, EXPIRED]
+        r_multiple:
+          type: number
+          nullable: true
+    SignalsResponse:
+      type: object
+      required: [count, signals]
+      properties:
+        count:
+          type: integer
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/Signal"
+    SystemStatus:
+      type: object
+      required:
+        - service
+        - scanner_state
+        - uptime_seconds
+        - logic_version
+        - config_version
+      properties:
+        service:
+          type: string
+        scanner_state:
+          type: string
+          enum: [running, stopped, degraded]
+        uptime_seconds:
+          type: number
+        logic_version:
+          type: string
+        config_version:
+          type: string
+        last_scan_time:
+          type: string
+          format: date-time
+          nullable: true
+        last_signal:
+          $ref: "#/components/schemas/SignalSummary"
+        last_log:
+          $ref: "#/components/schemas/SystemLog"
+    SignalSummary:
+      type: object
+      additionalProperties: true
+    SystemLog:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        level:
+          type: string
+        event:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+    Stats:
+      type: object
+      required:
+        - total_signals
+        - wins
+        - losses
+        - expired
+        - win_rate
+        - profit_factor
+        - signals_per_day
+      properties:
+        total_signals:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        expired:
+          type: integer
+        win_rate:
+          type: number
+        profit_factor:
+          type: number
+        signals_per_day:
+          type: number
+        logic_version:
+          type: string
+        config_version:
+          type: string
+    CellPerformance:
+      type: object
+      required:
+        - regime
+        - score_bucket
+        - signal_count
+        - wins
+        - losses
+        - expired
+        - win_rate
+        - profit_factor
+      properties:
+        regime:
+          type: string
+        score_bucket:
+          type: integer
+        signal_count:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        expired:
+          type: integer
+        win_rate:
+          type: number
+        profit_factor:
+          type: number
+    CellPerformanceResponse:
+      type: object
+      required: [count, cells]
+      properties:
+        count:
+          type: integer
+        cells:
+          type: array
+          items:
+            $ref: "#/components/schemas/CellPerformance"
+    ReviewBundle:
+      type: object
+      required:
+        - artifact_metadata
+        - aggregate_metrics
+        - per_pair_metrics
+        - per_cell_metrics
+        - determinism
+        - config_snapshot
+      properties:
+        artifact_metadata:
+          type: object
+          additionalProperties: true
+        aggregate_metrics:
+          type: object
+          additionalProperties: true
+        per_pair_metrics:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        per_cell_metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/CellPerformance"
+        determinism:
+          type: object
+          additionalProperties: true
+        config_snapshot:
+          type: object
+          additionalProperties: true
+    KillResponse:
+      type: object
+      required: [status, scanner]
+      properties:
+        status:
+          type: string
+        scanner:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
