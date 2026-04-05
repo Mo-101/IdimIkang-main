@@ -71,40 +71,45 @@ def resolve_signal(sig: dict) -> tuple[str | None, float | None, dict | None]:
     # State from DB
     is_partial = sig.get("is_partial", False)
     current_sl = float(sig.get("trailing_sl")) if sig.get("trailing_sl") else float(sig["stop_loss"])
+    
+    # Adverse Excursion Tracking (MAE)
+    max_adv_pct = float(sig.get("adverse_excursion") or 0.0)
 
     for _, row in df.iterrows():
         high, low = float(row["high"]), float(row["low"])
         
+        # Track maximum adverse excursion
+        current_adv = (entry - low) / entry * 100.0 if side == "LONG" else (high - entry) / entry * 100.0
+        max_adv_pct = max(max_adv_pct, current_adv)
+
         if side == "LONG":
             # 1. Check for Stop Loss / Breakeven
             if low <= current_sl:
                 if is_partial:
-                    return "PARTIAL_WIN", 0.6, None # 0.6R secured at TP1, 0R on the rest
-                return "LOSS", -1.0, None
+                    return "PARTIAL_WIN", 0.6, {"adverse_excursion": max_adv_pct}
+                return "LOSS", -1.0, {"adverse_excursion": max_adv_pct}
             
             # 2. Check for Scale-out (TP1)
             if not is_partial and high >= tp1:
-                # Trigger Breakeven migration
-                return "HIT_TP1", 0.6, {"is_partial": True, "trailing_sl": entry}
+                return "HIT_TP1", 0.6, {"is_partial": True, "trailing_sl": entry, "adverse_excursion": max_adv_pct}
             
             # 3. Check for Final Target (TP2)
             if high >= tp2:
-                # 0.6R (from TP1 stage) + 1.5R (remaining 50% at 3R) = 2.1R total
-                return "WIN", 2.1, None
+                return "WIN", 2.1, {"adverse_excursion": max_adv_pct}
                 
         else: # SHORT
             if high >= current_sl:
                 if is_partial:
-                    return "PARTIAL_WIN", 0.6, None
-                return "LOSS", -1.0, None
+                    return "PARTIAL_WIN", 0.6, {"adverse_excursion": max_adv_pct}
+                return "LOSS", -1.0, {"adverse_excursion": max_adv_pct}
             
             if not is_partial and low <= tp1:
-                return "HIT_TP1", 0.6, {"is_partial": True, "trailing_sl": entry}
+                return "HIT_TP1", 0.6, {"is_partial": True, "trailing_sl": entry, "adverse_excursion": max_adv_pct}
             
             if low <= tp2:
-                return "WIN", 2.1, None
+                return "WIN", 2.1, {"adverse_excursion": max_adv_pct}
                 
-    return None, None, None
+    return None, None, {"adverse_excursion": max_adv_pct}
 
 
 def run_once():
@@ -113,7 +118,7 @@ def run_once():
     with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT id, signal_id, pair, ts, side, entry, stop_loss, take_profit, reason_trace, is_partial, trailing_sl
+            SELECT id, signal_id, pair, ts, side, entry, stop_loss, take_profit, reason_trace, is_partial, trailing_sl, adverse_excursion
             FROM signals
             WHERE outcome IS NULL
             ORDER BY ts ASC
@@ -144,31 +149,39 @@ def run_once():
                 outcome, r_mult, updates_meta = resolve_signal(row)
             
             if outcome == "HIT_TP1":
-                # Persist partial state but keep outcome NULL to continue tracking for TP2
+                # Persist partial state and MAE but keep outcome NULL to continue tracking for TP2
                 with db_conn() as conn, conn.cursor() as cur:
                     cur.execute(
                         """
                         UPDATE signals
-                        SET is_partial = TRUE, trailing_sl = %s, updated_at = NOW()
+                        SET is_partial = TRUE, trailing_sl = %s, adverse_excursion = %s, updated_at = NOW()
                         WHERE id = %s
                         """,
-                        (updates_meta["trailing_sl"], row["id"]),
+                        (updates_meta["trailing_sl"], updates_meta["adverse_excursion"], row["id"]),
                     )
                     conn.commit()
                 log_event("INFO", "outcome_tracker", "scale_out_hit", {"signal_id": row["signal_id"], "pair": row["pair"]})
             elif outcome is not None:
-                # Final resolution: WIN, LOSS, or PARTIAL_WIN (hit BE after TP1)
+                # Final resolution: WIN, LOSS, or PARTIAL_WIN
                 with db_conn() as conn, conn.cursor() as cur:
                     cur.execute(
                         """
                         UPDATE signals
-                        SET outcome = %s, r_multiple = %s, updated_at = NOW()
+                        SET outcome = %s, r_multiple = %s, adverse_excursion = %s, updated_at = NOW()
                         WHERE id = %s
                         """,
-                        (outcome, r_mult, row["id"]),
+                        (outcome, r_mult, updates_meta["adverse_excursion"], row["id"]),
                     )
                     conn.commit()
                 updates += 1
+            else:
+                # No resolution yet, but still update the adverse excursion if it changed
+                with db_conn() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE signals SET adverse_excursion = %s, updated_at = NOW() WHERE id = %s",
+                        (updates_meta["adverse_excursion"], row["id"]),
+                    )
+                    conn.commit()
         except Exception as e:
             errors += 1
             log_event("ERROR", "outcome_tracker", "per_signal_error", {"signal_id": row["signal_id"], "error": str(e)})

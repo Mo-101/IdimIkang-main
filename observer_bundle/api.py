@@ -189,12 +189,38 @@ class TradeOrder(BaseModel):
     order_type: str
     amount: float
     price: float = None
+    leverage: int = None
+    tp_price: float = None
+    sl_price: float = None
+
+class ClosePositionRequest(BaseModel):
+    exchange: str
+    symbol: str
+
+class PanicRequest(BaseModel):
+    confirm: bool
+
+class LeverageRequest(BaseModel):
+    exchange: str
+    symbol: str
+    leverage: int
+
+class MarginRequest(BaseModel):
+    exchange: str
+    symbol: str
+    mode: str  # 'isolated' or 'cross'
 
 @router.get("/trade/exchanges")
 def get_exchanges():
     try:
         hub = get_hub()
-        return {"active_exchanges": list(hub.exchanges.keys())}
+        exchanges = []
+        for name, ex in hub.exchanges.items():
+            exchanges.append({
+                "name": name,
+                "is_simulated": getattr(ex, "is_simulated", False)
+            })
+        return {"active_exchanges": exchanges}
     except Exception as e:
         return {"active_exchanges": [], "error": str(e)}
 
@@ -208,20 +234,74 @@ def get_positions():
     hub = get_hub()
     return {"positions": hub.get_active_positions()}
 
+@router.get("/market/ticker/{exchange}/{symbol}")
+def get_ticker(exchange: str, symbol: str):
+    hub = get_hub()
+    data = hub.get_ticker_data(exchange, symbol)
+    if "error" in data:
+        raise HTTPException(status_code=500, detail=data["error"])
+    return data
+
+@router.post("/trade/leverage")
+def set_leverage(req: LeverageRequest):
+    hub = get_hub()
+    result = hub.set_leverage(req.exchange, req.symbol, req.leverage)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
+
+@router.post("/trade/margin")
+def set_margin(req: MarginRequest):
+    hub = get_hub()
+    result = hub.set_margin_mode(req.exchange, req.symbol, req.mode)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
+
 @router.post("/trade/place")
 def place_order(order: TradeOrder):
     hub = get_hub()
+    
+    # Handle leverage sync if provided
+    if order.leverage:
+        hub.set_leverage(order.exchange, order.symbol, order.leverage)
+        
+    # Build params for TP/SL if provided
+    params = {}
+    if order.tp_price:
+        params['takeProfitPrice'] = order.tp_price
+    if order.sl_price:
+        params['stopLossPrice'] = order.sl_price
+
     result = hub.place_order(
         exchange_name=order.exchange,
         symbol=order.symbol,
         side=order.side,
         order_type=order.order_type,
         amount=order.amount,
-        price=order.price
+        price=order.price,
+        params=params
     )
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error"))
     return result
+
+@router.post("/api/trade/close")
+@router.post("/trade/close")
+def close_position(req: ClosePositionRequest):
+    hub = get_hub()
+    result = hub.close_position(req.exchange, req.symbol)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
+
+@router.post("/api/trade/panic")
+@router.post("/trade/panic")
+def panic_sell(req: PanicRequest):
+    if not req.confirm:
+         raise HTTPException(status_code=400, detail="Panic confirmation missing")
+    hub = get_hub()
+    return hub.panic_sell_all()
 
 # === REGISTER ROUTES ===
 app.include_router(router)

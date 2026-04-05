@@ -11,6 +11,9 @@ CURRENT_CONFIG_VERSION = "v1.5-quant-alpha"
 # Outcome Rules
 SIGNAL_EXPIRY_DAYS = int(os.environ.get("SIGNAL_EXPIRY_DAYS", "3"))
 
+# v1.5-quant-alpha Risk Management
+RISK_PER_TRADE_USD = 50.0  # Absolute USD risk per signal
+
 # Streaming Telemetry
 SSE_AUTH_TOKEN = os.environ.get("SSE_AUTH_TOKEN", "idim_dev_token_2026")
 SSE_MAX_CONNECTIONS = int(os.environ.get("SSE_MAX_CONNECTIONS", "5"))
@@ -20,7 +23,12 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # ─── Hardening Parameters ────────────────────────────────────────────────────
 
-# 1. Warmup floor: minimum bars required before a signal can be emitted
+# 1. Accelerator Performance (v1.9.5)
+SCANNER_WORKERS = int(os.environ.get("SCANNER_WORKERS", "8"))
+SCANNER_CYCLE_TIMEOUT_SECONDS = int(os.environ.get("SCANNER_CYCLE_TIMEOUT_SECONDS", "45"))
+SCANNER_REFRESH_UNIVERSE_MINUTES = int(os.environ.get("SCANNER_REFRESH_UNIVERSE_MINUTES", "15"))
+
+# 2. Warmup floor: minimum bars required before a signal can be emitted
 SCANNER_WARMUP_BARS = int(os.environ.get("SCANNER_WARMUP_BARS", "100"))
 
 # 2. Data Freshness: max seconds allowed since last kline close

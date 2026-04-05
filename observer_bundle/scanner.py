@@ -40,8 +40,12 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 import requests
+import warnings
 from dotenv import load_dotenv
 from telegram import Bot
+
+# Silence pandas noise
+warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 
 # ─── Environment ───────────────────────────────────────────────────────────────
 load_dotenv()
@@ -107,6 +111,11 @@ _fh = RotatingFileHandler("logs/scanner.log", maxBytes=100 * 1024 * 1024, backup
 _fh.setFormatter(_fmt)
 logger.addHandler(_fh)
 
+# --- Add StreamHandler for PM2 console capture ---
+_sh = logging.StreamHandler(sys.stdout)
+_sh.setFormatter(_fmt)
+logger.addHandler(_sh)
+
 # ─── Signal handling ───────────────────────────────────────────────────────────
 def handle_stop(signum, frame):
     global _STOP
@@ -152,18 +161,81 @@ def log_event(level: str, component: str, event: str, details: dict) -> None:
     finally:
         _put_conn(conn)
 
-def send_telegram(message: str) -> None:
-    """Fire-and-forget: daemon thread so it never blocks the scan loop."""
+def send_telegram(message: str, reply_markup: Optional[dict] = None) -> None:
+    """Fire-and-forget: daemon thread so it never blocks the scan loop.
+    Supports Bot API 9.6 features via raw dictionary markup.
+    """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     def _send():
         try:
-            Bot(token=TELEGRAM_BOT_TOKEN).send_message(
-                chat_id=TELEGRAM_CHAT_ID, text=message
-            )
-        except Exception:
-            pass
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True
+            }
+            if reply_markup:
+                payload["reply_markup"] = json.dumps(reply_markup)
+            
+            r = requests.post(url, json=payload, timeout=15)
+            r.raise_for_status()
+        except Exception as e:
+            logging.error(f"[TELEGRAM_ERROR] Failed to dispatch alert: {e}")
     threading.Thread(target=_send, daemon=True).start()
+
+def format_sovereign_alert(sig: dict) -> Tuple[str, dict]:
+    """Generates an institutional-grade HTML alert with Bot API 9.6 visual telemetry."""
+    side_color = "🟢" if sig['side'] == 'LONG' else "🔴"
+    side_style = "success" if sig['side'] == 'LONG' else "danger"
+    
+    # 1. Header & Instrument
+    html = [
+        f"<b>🜂 WOLFRAM SOVEREIGN SIGNAL [{sig['logic_version']}]</b>",
+        f"{side_color} <b>{sig['pair']} | {sig['side']}</b>",
+        f"<i>Score: {sig['score']} | Regime: {sig['regime']}</i>",
+        ""
+    ]
+    
+    # 2. Key Levels (Institutional Precision)
+    html.extend([
+        f"<b>Entry:</b> <code>{sig['entry']:.4f}</code>",
+        f"<b>Stop:</b> <code>{sig['stop_loss']:.4f}</code>",
+        f"<b>TP1 (Scale-out):</b> <code>{sig['tp1']:.4f}</code>",
+        f"<b>TP2 (Runner):</b> <code>{sig['tp2']:.4f}</code>",
+        ""
+    ])
+    
+    # 3. Sovereign Gates (v1.5 Quant Alpha)
+    trace = sig.get('reason_trace', {})
+    gates = [
+        ("G_sq", trace.get('recent_squeeze_fire', False)),
+        ("G_vwap", abs(sig.get('vwap_delta', 0)) < 0.03), # 3% limit
+        ("G_vol", (trace.get('volume_ratio', 0) or 0) >= 1.2),
+        ("G_alpha", (trace.get('derivatives_bonus', 0) or 0) > 0)
+    ]
+    
+    gate_str = " | ".join([f"{'✅' if p else '❌'} {n}" for n, p in gates])
+    html.append(f"<b>GATES:</b> {gate_str}")
+    html.append("")
+    
+    # 4. Telemetry Footer
+    ts_str = sig['ts'].strftime('%Y-%m-%d %H:%M:%S UTC')
+    html.append(f"<pre>Executed: {ts_str}</pre>")
+
+    # 5. Bot API 9.6 Markup (Styles)
+    # Note: 'style' is an April 2026 addition for InlineKeyboardButton
+    markup = {
+        "inline_keyboard": [
+            [
+                {"text": "🚀 VIEW ON DASHBOARD", "url": "https://idim-dashboard.internal", "style": side_style},
+                {"text": "📊 CHART", "url": f"https://www.tradingview.com/chart/?symbol=BINANCE:{sig['pair']}.P", "style": "primary"}
+            ]
+        ]
+    }
+    
+    return "\n".join(html), markup
 
 # ─── Market data ───────────────────────────────────────────────────────────────
 def fetch_klines(symbol: str, interval: str, limit: int) -> pd.DataFrame:
@@ -484,12 +556,20 @@ def build_signal(
     tp1 = entry + (1.2 * atr_v) if side == "LONG" else entry - (1.2 * atr_v)
     tp2 = entry + (3.0 * atr_v) if side == "LONG" else entry - (3.0 * atr_v)
     
+    # Refinement 2: Risk Parity Position Sizing
+    # Position Size = Risk Amount / |Entry - Stop|
+    # This ensures every trade risks exactly RISK_PER_TRADE_USD
+    stop_dist = abs(entry - stop)
+    pos_size = config.RISK_PER_TRADE_USD / stop_dist if stop_dist > 0 else 0
+    
     trace.update({
         "score_bucket": score_bucket, 
         "cell_allowed": True, 
         "allowed_cell_key": [regime, score_bucket],
         "tp1": round(tp1, 8),
         "tp2": round(tp2, 8),
+        "risk_usd": config.RISK_PER_TRADE_USD,
+        "position_size": round(pos_size, 8),
         "tags": trace.get("tags", [])
     })
     
@@ -500,6 +580,8 @@ def build_signal(
         "side": side,
         "entry": entry,
         "stop_loss": stop,
+        "tp1": round(tp1, 8),
+        "tp2": round(tp2, 8),
         "take_profit": round(tp2, 8), # Default to runner for legacy
         "score": score,
         "regime": regime,
@@ -649,263 +731,193 @@ def insert_signal(conn, sig: dict) -> None:
         )
         conn.commit()
     _LAST_SIGNAL = {**sig, "ts": sig["ts"].isoformat()}
-    send_telegram(
-        f"Idim Ikang v1.5-quant-alpha\n{sig['pair']} {sig['side']}\n"
-        f"Score: {sig['score']}\nRegime: {sig['regime']}\n"
-        f"Entry: {sig['entry']:.4f}\nSL: {sig['stop_loss']:.4f}\nTP: {sig['take_profit']:.4f}"
-    )
+    
+    # Bot API 9.6 Institutional Alerting
+    alert_text, alert_markup = format_sovereign_alert(sig)
+    send_telegram(alert_text, reply_markup=alert_markup)
 
 # ─── Core scan loop ────────────────────────────────────────────────────────────
+# ─── Accelerator Tuners (v1.9.5) ───────────────────────────────────────────
+SCANNER_WORKERS = config.SCANNER_WORKERS
+SCANNER_TIMEOUT = config.SCANNER_CYCLE_TIMEOUT_SECONDS
+_scan_lock = threading.Lock()
+
+# ─── Worker Logic (DB-FREE) ──────────────────────────────────────────────────
+def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_longs: bool, btc_blocks_shorts: bool) -> Optional[dict]:
+    """Market Data Fetch + Signal Compute (Strictly NO DB Access)."""
+    pair, idx = pair_idx_tuple
+    try:
+        # 1. Pipeline: Market Data Snapshot
+        df15 = add_indicators(fetch_klines(pair, "15m", LOOKBACK_15M))
+        df4  = fetch_klines(pair, "4h", LOOKBACK_4H)
+        df1h = fetch_klines(pair, "1h", 100)
+        
+        regime = classify_regime(df4)
+        df1h["ema50"] = ema(df1h["close"], 50)
+        _l1h = df1h.iloc[-1]
+        is_1h_bullish = _l1h["close"] > _l1h["ema50"]
+        is_1h_bearish = _l1h["close"] < _l1h["ema50"]
+        
+        latest = df15.iloc[-1]
+        
+        # 2. Gate Validation
+        if (time.time() - latest["close_time"].timestamp()) > DATA_FRESHNESS_MAX_SECONDS:
+            return None
+        if len(df15) < SCANNER_WARMUP_BARS:
+            return None
+
+        # Base scores (Mock alpha for compute phase)
+        long_score,  long_trace  = score_long_signal(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
+        short_score, short_trace = score_short_signal(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
+
+        if BLOCK_AGAINST_REGIME:
+            if regime in ("STRONG_UPTREND", "UPTREND"): short_score = 0
+            if regime in ("STRONG_DOWNTREND", "DOWNTREND"): long_score = 0
+
+        if btc_blocks_longs: long_score = 0
+        if btc_blocks_shorts: short_score = 0
+
+        if not is_1h_bullish: long_score = 0
+        if not is_1h_bearish: short_score = 0
+
+        price   = float(latest["close"])
+        atr_val = float(latest["atr14"])
+
+        for side, score, trace in (("LONG", long_score, long_trace), ("SHORT", short_score, short_trace)):
+            if score < MIN_SIGNAL_SCORE: continue
+            if REQUIRE_SQUEEZE_GATE and not latest.get("recent_squeeze_fire", False): continue
+
+            vwap_delta = 0.0
+            _vwap = latest.get("vwap")
+            if _vwap and float(_vwap) > 0:
+                vwap_delta = (price - float(_vwap)) / float(_vwap)
+                epsilon = VWAP_EPSILON_0 + VWAP_LAMBDA * (atr_val / price)
+                if (1 if side == "LONG" else -1) * vwap_delta > epsilon: continue
+
+            vol_ratio = trace.get("volume_ratio", 0.0)
+            if vol_ratio < VOLUME_RATIO_MIN: continue
+
+            atr_pct = atr_val / price
+            sl_mult = ATR_SL_MULTIPLIER
+            if atr_pct > MAX_ATR_PCT_FOR_FULL_SL:
+                sl_mult = min(sl_mult, CAP_SL_MULTIPLIER_WHEN_WIDE)
+
+            stop_price = price - sl_mult * atr_val if side == "LONG" else price + sl_mult * atr_val
+
+            return {
+                "pair": pair, "side": side, "latest": latest,
+                "regime": regime, "score": score,
+                "reason_trace": trace, "universe_rank": idx,
+                "volume_ratio": vol_ratio, "entry": price,
+                "stop_loss": stop_price, "vwap_delta": vwap_delta,
+            }
+    except Exception as e:
+        logger.error(f"[SCAN ERROR] {pair}: {e}")
+    return None
+
 def scan_once() -> None:
-    global _LAST_SCAN_TS, _LAST_SCAN_GAP_SECONDS
-    started = time.time()
-    skip_lock = os.environ.get("SKIP_LOCK", "false").lower() == "true"
+    """Main thread orchestrator (Serial Writes / Parallel Compute)."""
+    global _LAST_SCAN_TS
+    
+    if not _scan_lock.acquire(blocking=False):
+        logger.warning("[SCAN SKIPPED] previous cycle still running")
+        return
 
-    if _LAST_SCAN_TS is not None:
-        _LAST_SCAN_GAP_SECONDS = started - _LAST_SCAN_TS
-        if _LAST_SCAN_GAP_SECONDS > SCAN_INTERVAL_SECONDS * 1.5:
-            log_event("WARN", "scanner", "scan_gap_detected",
-                      {"gap_seconds": round(_LAST_SCAN_GAP_SECONDS, 1)})
-    _LAST_SCAN_TS = started
+    try:
+        started = time.time()
+        btc_regime = get_btc_macro_regime()
+        btc_blocks_longs  = btc_regime in ("STRONG_DOWNTREND", "DOWNTREND")
+        btc_blocks_shorts = btc_regime in ("STRONG_UPTREND",   "UPTREND")
+        
+        # Parallel Execution
+        pair_tasks = [(pair, i) for i, pair in enumerate(PAIRS)]
+        results = []
+        passed_count = 0
+        rejected_count = 0
+        error_count = 0
 
-    # ── G_beta: BTC King's Gate ──────────────────────────────────────────────
-    btc_regime = get_btc_macro_regime()
-    btc_blocks_longs  = btc_regime in ("STRONG_DOWNTREND", "DOWNTREND")
-    btc_blocks_shorts = btc_regime in ("STRONG_UPTREND",   "UPTREND")
-
-    candidates = []
-
-    with db_conn() as conn:
-        with conn.cursor() as lock_cur:
-            if not skip_lock:
-                lock_cur.execute("SELECT pg_advisory_lock(1337);")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=SCANNER_WORKERS) as executor:
+            futures = {
+                executor.submit(analyze_pair, task, btc_regime, btc_blocks_longs, btc_blocks_shorts): task[0]
+                for task in pair_tasks
+            }
             try:
-                log_event("INFO", "scanner", "scan_start",
-                          {"universe_size": len(PAIRS), "btc_regime": btc_regime})
-
-                for idx, pair in enumerate(PAIRS):
+                for future in concurrent.futures.as_completed(futures, timeout=SCANNER_TIMEOUT):
+                    sym = futures[future]
                     try:
-                        df15   = add_indicators(fetch_klines(pair, "15m", LOOKBACK_15M))
-                        df4    = fetch_klines(pair, "4h", LOOKBACK_4H)
-                        regime = classify_regime(df4)
+                        res = future.result()
+                        if res:
+                            results.append(res)
+                            passed_count += 1
+                        else:
+                            rejected_count += 1
+                    except Exception as exc:
+                        error_count += 1
+                        logger.error(f"[FUTURE ERROR] {sym}: {exc}")
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"[SCAN TIMEOUT] cycle exceeded {SCANNER_TIMEOUT}s; ignoring stragglers")
 
-                        # ── G_str: 1H Multi-Timeframe Alignment ─────────────
-                        df1h = fetch_klines(pair, "1h", 100)
-                        df1h["ema50"] = ema(df1h["close"], 50)
-                        _l1h = df1h.iloc[-1]
-                        is_1h_bullish = _l1h["close"] > _l1h["ema50"]
-                        is_1h_bearish = _l1h["close"] < _l1h["ema50"]
+        # Serialized Persistence (Main Thread)
+        candidates = []
+        with db_conn() as conn:
+            for r in results:
+                # Cooldown check
+                if cooldown_active(conn, r["pair"], r["latest"]["close_time"].to_pydatetime()):
+                    continue
+                # v1.5 Alpha Context
+                alpha = get_derivatives_alpha(conn, r["pair"])
+                if r["side"] == "LONG":
+                     r["score"], r["reason_trace"] = score_long_signal(r["latest"], r["regime"], alpha)
+                else:
+                     r["score"], r["reason_trace"] = score_short_signal(r["latest"], r["regime"], alpha)
+                candidates.append(r)
 
-                        latest = df15.iloc[-1]
-                        req_cols = ("ema20", "ema50", "rsi14", "macd_hist", "atr14", "volume_sma20")
-                        if any(np.isnan(latest.get(k, np.nan)) for k in req_cols):
-                            log_event("INFO", "scanner", "warmup_skip", {"pair": pair})
-                            continue
+            selected = select_top_ranked_wolfram_signals(candidates)
+            for s in selected:
+                sig = build_signal(s["pair"], s["side"], s["latest"], s["regime"], s["score"], s["reason_trace"])
+                insert_signal(conn, sig)
+                log_event("INFO", "scanner", "signal_logged", {"pair": s["pair"], "side": s["side"], "score": s["score"]})
 
-                        # ── Gate 7: Warmup Floor ─────────────────────────────
-                        if len(df15) < SCANNER_WARMUP_BARS:
-                            msg = f"Insufficient bars ({len(df15)} < {SCANNER_WARMUP_BARS})"
-                            log_event("INFO", "scanner", "gate7_warmup_reject", 
-                                      {"pair": pair, "reason": "WARMUP_FLOOR", "detail": msg})
-                            logging.info(f"[REJECT] {pair} - WARMUP_FLOOR: {msg}")
-                            continue
+            duration = time.time() - started
+            _LAST_SCAN_TS = started
+            
+            # Heartbeat Summary
+            logging.info(
+                f"[CYCLE COMPLETE] universe={len(PAIRS)} | "
+                f"candidates={passed_count} | rejected={rejected_count} | errors={error_count} | "
+                f"duration={duration:.2f}s | next={SCAN_INTERVAL_SECONDS}s"
+            )
+            
+            log_event("INFO", "scanner", "scan_complete", {
+                "duration": round(duration, 2),
+                "candidates": passed_count,
+                "fired": len(selected)
+            })
+            
+    except Exception as e:
+        logger.error(f"[FATAL SCAN ERROR] {e}")
+    finally:
+        _scan_lock.release()
 
-                        # ── Gate 8: Data Freshness ───────────────────────────
-                        last_close_ts = latest["close_time"].timestamp()
-                        now_ts = time.time()
-                        if (now_ts - last_close_ts) > DATA_FRESHNESS_MAX_SECONDS:
-                            msg = f"Data stale ({round(now_ts - last_close_ts)}s old)"
-                            log_event("INFO", "scanner", "gate8_freshness_reject",
-                                      {"pair": pair, "reason": "DATA_STALE", "detail": msg})
-                            logging.info(f"[REJECT] {pair} - DATA_STALE: {msg}")
-                            continue
-
-                        if cooldown_active(conn, pair,
-                                           latest["close_time"].to_pydatetime()):
-                            continue
-
-                        # v1.5 Alpha Merge
-                        alpha_data = get_derivatives_alpha(conn, pair)
-
-                        long_score,  long_trace  = score_long_signal(latest, regime, alpha_data)
-                        short_score, short_trace = score_short_signal(latest, regime, alpha_data)
-
-                        # ── Gate 1: Regime-direction consistency ─────────────
-                        if BLOCK_AGAINST_REGIME:
-                            if regime in ("STRONG_UPTREND", "UPTREND") and short_score > 0:
-                                log_event("INFO", "scanner", "gate1_regime_reject",
-                                          {"pair": pair, "side": "SHORT", "reason": "REGIME_DIRECTION_CONFLICT", "regime": regime})
-                                logging.info(f"[REJECT] {pair} - REGIME_DIRECTION_CONFLICT: SHORT in {regime}")
-                                short_score = 0
-                            if regime in ("STRONG_DOWNTREND", "DOWNTREND") and long_score > 0:
-                                log_event("INFO", "scanner", "gate1_regime_reject",
-                                          {"pair": pair, "side": "LONG", "reason": "REGIME_DIRECTION_CONFLICT", "regime": regime})
-                                logging.info(f"[REJECT] {pair} - REGIME_DIRECTION_CONFLICT: LONG in {regime}")
-                                long_score = 0
-
-                        # ── Gate 5: BTC King's Gate ──────────────────────────
-                        if btc_blocks_longs and long_score > 0:
-                            log_event("INFO", "scanner", "gate5_btc_reject",
-                                      {"pair": pair, "side": "LONG", "btc": btc_regime, "reason": "BTC_MACD_CONFLICT"})
-                            logging.info(f"[REJECT] {pair} - BTC_MACD_CONFLICT: LONG vs BTC {btc_regime}")
-                            long_score = 0
-                        if btc_blocks_shorts and short_score > 0:
-                            log_event("INFO", "scanner", "gate5_btc_reject",
-                                      {"pair": pair, "side": "SHORT", "btc": btc_regime, "reason": "BTC_MACD_CONFLICT"})
-                            logging.info(f"[REJECT] {pair} - BTC_MACD_CONFLICT: SHORT vs BTC {btc_regime}")
-                            short_score = 0
-
-                        # ── Gate 6: 1H MTFA ──────────────────────────────────
-                        if not is_1h_bullish and long_score > 0:
-                            log_event("INFO", "scanner", "gate6_mtfa_reject",
-                                      {"pair": pair, "side": "LONG", "reason": "MTFA_1H_CONFLICT"})
-                            logging.info(f"[REJECT] {pair} - MTFA_1H_CONFLICT: LONG below 1H EMA50")
-                            long_score = 0
-                        if not is_1h_bearish and short_score > 0:
-                            log_event("INFO", "scanner", "gate6_mtfa_reject",
-                                      {"pair": pair, "side": "SHORT", "reason": "MTFA_1H_CONFLICT"})
-                            logging.info(f"[REJECT] {pair} - MTFA_1H_CONFLICT: SHORT above 1H EMA50")
-                            short_score = 0
-
-                        # ── Gate 4: STRONG_UPTREND internal consistency ───────
-                        if regime == "STRONG_UPTREND" and long_score >= MIN_SIGNAL_SCORE:
-                            price = float(latest["close"])
-                            if REQUIRE_PRICE_ABOVE_EMA_IN_STRONG_UPTREND and price <= float(latest["ema20"]):
-                                long_score = 0
-                                log_event("INFO", "scanner", "gate4_reject",
-                                          {"pair": pair, "reason": "price<=ema20 in STRONG_UPTREND"})
-                            if REQUIRE_RSI_ABOVE_50_IN_STRONG_UPTREND and float(latest["rsi14"]) <= 50:
-                                long_score = 0
-                                log_event("INFO", "scanner", "gate4_reject",
-                                          {"pair": pair, "reason": "RSI<=50 in STRONG_UPTREND"})
-
-                        # ── Collection: G_sq + G_vwap + G_vol + ATR cap ───────
-                        price   = float(latest["close"])
-                        atr_val = float(latest["atr14"])
-
-                        for side, score, trace in (
-                            ("LONG",  long_score,  long_trace),
-                            ("SHORT", short_score, short_trace),
-                        ):
-                            if score < MIN_SIGNAL_SCORE:
-                                continue
-                            if side == "SHORT" and score <= long_score and long_score >= MIN_SIGNAL_SCORE:
-                                continue
-                            if side == "LONG"  and score <  short_score and short_score >= MIN_SIGNAL_SCORE:
-                                continue
-
-                            direction = 1 if side == "LONG" else -1
-
-                            # G_sq: Squeeze hard gate
-                            if REQUIRE_SQUEEZE_GATE:
-                                if not latest.get("recent_squeeze_fire", False):
-                                    log_event("INFO", "scanner", "gsq_reject",
-                                              {"pair": pair, "side": side, "reason": "SQUEEZE_REQUIRED"})
-                                    logging.info(f"[REJECT] {pair} - SQUEEZE_REQUIRED for {side}")
-                                    continue
-
-                            # G_vwap: Dynamic epsilon gate
-                            # ε(A,t) = ε₀ + λ · ATR/P
-                            vwap_delta = 0.0
-                            _vwap = latest.get("vwap")
-                            if _vwap and float(_vwap) > 0 and not np.isnan(float(_vwap)):
-                                vwap_delta = (price - float(_vwap)) / float(_vwap)
-                                epsilon = VWAP_EPSILON_0 + VWAP_LAMBDA * (atr_val / price)
-                                if direction * vwap_delta > epsilon:
-                                    log_event("INFO", "scanner", "gvwap_reject", {
-                                        "pair": pair, "side": side,
-                                        "delta_pct": round(vwap_delta * 100, 2),
-                                        "epsilon_pct": round(epsilon * 100, 2),
-                                        "reason": "VWAP_OVEREXTENDED"
-                                    })
-                                    logging.info(f"[REJECT] {pair} - VWAP_OVEREXTENDED ({round(vwap_delta*100,2)}% > {round(epsilon*100,2)}%)")
-                                    continue
-
-                            # G_vol: Volume hard gate
-                            vol_ratio = trace.get("volume_ratio", 0.0)
-                            if vol_ratio < VOLUME_RATIO_MIN:
-                                log_event("INFO", "scanner", "gate2_volume_reject", {
-                                    "pair": pair, "side": side,
-                                    "volume_ratio": round(vol_ratio, 3),
-                                    "reason": "VOL_INSUFFICIENT"
-                                })
-                                logging.info(f"[REJECT] {pair} - VOL_INSUFFICIENT ({round(vol_ratio,2)} < {VOLUME_RATIO_MIN})")
-                                continue
-
-                            # Gate 3: ATR cap for wide stops
-                            atr_pct = atr_val / price if price > 0 else 999.0
-                            sl_mult = ATR_SL_MULTIPLIER
-                            if atr_pct > MAX_ATR_PCT_FOR_FULL_SL:
-                                sl_mult = min(sl_mult, CAP_SL_MULTIPLIER_WHEN_WIDE)
-                                log_event("INFO", "scanner", "gate3_atr_cap", {
-                                    "pair": pair, "atr_pct": round(atr_pct * 100, 2),
-                                    "sl_mult": sl_mult,
-                                })
-
-                            stop_price = (
-                                price - sl_mult * atr_val
-                                if side == "LONG"
-                                else price + sl_mult * atr_val
-                            )
-
-                            candidates.append({
-                                "pair": pair, "side": side, "latest": latest,
-                                "regime": regime, "score": score,
-                                "reason_trace": trace, "universe_rank": idx,
-                                "volume_ratio": vol_ratio, "entry": price,
-                                "stop_loss": stop_price, "vwap_delta": vwap_delta,
-                            })
-                            break  # one side per pair
-
-                    except Exception as pair_err:
-                        log_event("ERROR", "scanner", "pair_scan_error",
-                                  {"pair": pair, "error": str(pair_err)})
-
-                # Ranking & selection
-                selected = select_top_ranked_wolfram_signals(candidates)
-                for c in selected:
-                    sig = build_signal(
-                        c["pair"], c["side"], c["latest"],
-                        c["regime"], c["score"], c["reason_trace"],
-                        sl_mult=ATR_SL_MULTIPLIER,
-                    )
-                    insert_signal(conn, sig)
-                    log_event("INFO", "scanner", "signal_logged", {
-                        "pair": c["pair"], "side": c["side"],
-                        "regime": c["regime"], "score": c["score"],
-                        "cell_key": list(c["cell_key"]),
-                        "rank_score": round(c["rank_score"], 4),
-                    })
-
-            finally:
-                if not skip_lock:
-                    lock_cur.execute("SELECT pg_advisory_unlock(1337);")
-
-    duration = time.time() - started
-    log_event("INFO", "scanner", "scan_complete", {
-        "duration_seconds": round(duration, 3),
-        "candidates_found": len(candidates),
-    })
-
-# ─── Entry point ───────────────────────────────────────────────────────────────
 def main() -> None:
-    _init_pool()  # Connection pool must be ready before first log_event
+    _init_pool()
     refresh_active_universe()
-    log_event("INFO", "scanner", "scanner_start", {
-        "pairs": PAIRS,
-        "logic_version": LOGIC_VERSION,
-        "config_version": CONFIG_VERSION,
-    })
+    
+    # Handshake
+    handshake = (
+        f"<b>🜂 Idim Ikang Sovereign Accelerator Online</b>\n"
+        f"<i>Parallel Engine [v1.9.5] active with {SCANNER_WORKERS} workers.</i>"
+    )
+    send_telegram(handshake)
+
     while not _STOP:
         try:
             if time.time() - _LAST_UNIVERSE_REFRESH > UNIVERSE_REFRESH_INTERVAL:
                 refresh_active_universe()
             scan_once()
         except Exception as e:
-            log_event("ERROR", "scanner", "scan_error", {"error": str(e)})
+            logger.error(f"Main loop escape: {e}")
         time.sleep(SCAN_INTERVAL_SECONDS)
-    log_event("INFO", "scanner", "scanner_stop",
-              {"uptime_seconds": round(time.time() - _START_TS, 1)})
 
 if __name__ == "__main__":
     main()

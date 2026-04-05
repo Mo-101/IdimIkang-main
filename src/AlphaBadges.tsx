@@ -8,6 +8,9 @@ import React from 'react';
 interface AlphaBadgesProps {
   reasonTrace?: {
     tags?: string[];
+    recent_squeeze_fire?: boolean;
+    volume_ratio?: number;
+    derivatives_bonus?: number;
   };
 }
 
@@ -39,48 +42,51 @@ const badgeBaseStyle: React.CSSProperties = {
 };
 
 export default function AlphaBadges({ reasonTrace }: AlphaBadgesProps) {
-  if (!reasonTrace || !reasonTrace.tags || reasonTrace.tags.length === 0) {
+  if (!reasonTrace) {
     return <span style={{ color: "rgba(255,255,255,0.2)", fontSize: 10, fontFamily: "monospace" }}>—</span>;
   }
 
-  const tags = reasonTrace.tags;
+  const tags = reasonTrace.tags || [];
+  const hasSqueeze = reasonTrace.recent_squeeze_fire;
+  const hasVol = (reasonTrace.volume_ratio || 0) >= 1.2;
+  const hasAlpha = (reasonTrace.derivatives_bonus || 0) > 0;
 
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-      {tags.includes("Squeeze") && (
+      {hasSqueeze && (
         <span style={{
           ...badgeBaseStyle,
           background: "rgba(168, 85, 247, 0.1)",
           color: "#A855F7",
           border: "1px solid rgba(168, 85, 247, 0.3)",
         }}>
-          ⚡ SQUEEZE
+          G_SQ
         </span>
       )}
       
-      {tags.includes("CVD") && (
+      {hasVol && (
         <span style={{
           ...badgeBaseStyle,
           background: "rgba(14, 165, 233, 0.1)",
           color: "#0EA5E9",
           border: "1px solid rgba(14, 165, 233, 0.3)",
         }}>
-          🌊 CVD
+          G_VOL
         </span>
       )}
 
-      {tags.includes("Derivatives") && (
+      {hasAlpha && (
         <span style={{
           ...badgeBaseStyle,
           background: "rgba(34, 197, 94, 0.1)",
           color: "#22C55E",
           border: "1px solid rgba(34, 197, 94, 0.3)",
         }}>
-          🔥 ALPHA
+          G_ALPHA
         </span>
       )}
 
-      {/* Fallback for other tags if any */}
+      {/* Logic for legacy tags or other markers */}
       {tags.filter(t => !["Squeeze", "CVD", "Derivatives"].includes(t)).map(tag => (
         <span key={tag} style={{
           ...badgeBaseStyle,
