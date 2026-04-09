@@ -1,11 +1,12 @@
 node_modules/
-build/
-dist/
+.next/
 coverage/
-.venv/
-__pycache__/
-*.pyc
 .DS_Store
 *.log
 .env*
 !.env.example
+
+.venv/
+observer_bundle/.venv/
+node_modules/
+dist/

@@ -186,7 +186,7 @@ class ExchangeHub:
     def place_order(self, exchange_name: str, symbol: str, side: str, order_type: str, amount: float, price: float = None, params: dict = {}) -> Dict[str, Any]:
         """
         Mandated Execution Logic (v1.9.4):
-        DISPATCH = SIM ONLY for ALL venues during the evidence window.
+        DISPATCH = SIM ONLY unless ENABLE_LIVE_TRADING is true.
         """
         if exchange_name not in self.exchanges:
             return {"success": False, "error": f"Exchange {exchange_name} not initialized."}
@@ -194,15 +194,60 @@ class ExchangeHub:
         ex = self.exchanges[exchange_name]
         ccxt_symbol = symbol.replace("USDT", "/USDT:USDT") if "USDT" in symbol else symbol
         
-        # Hard-Lock: Log but do not dispatch
-        logger.info(f"[DISPATCH_LOCK_v1.9.4] {'LIVE' if not getattr(ex, 'is_simulated', False) else 'SIM'} {exchange_name} | {side} {amount} {ccxt_symbol} | Type: {order_type}")
+        is_simulated = getattr(ex, 'is_simulated', False)
         
-        # Simulate success for the UI
-        return {
-            "success": True, 
-            "info": "SIMULATED_SUCCESS_v1.9.4", 
-            "order_id": f"sim_{exchange_name.lower()}_{int(time.time())}"
-        }
+        # Check if live trading is globally enabled and exchange is not in simulation mode
+        if config.ENABLE_LIVE_TRADING and not is_simulated:
+            try:
+                logger.info(f"[LIVE_DISPATCH] {exchange_name} | {side} {amount} {ccxt_symbol} | Type: {order_type}")
+                
+                # Strip SL/TP from params to avoid passing them directly if not supported
+                sl_price = params.pop('stopLossPrice', None)
+                tp_price = params.pop('takeProfitPrice', None)
+                
+                order = ex.create_order(ccxt_symbol, order_type, side, amount, price, params)
+                
+                # If SL/TP provided, place them as separate reduce-only orders for Binance
+                if (sl_price or tp_price) and exchange_name.lower() == 'binance':
+                    try:
+                        opposite_side = 'sell' if side.lower() == 'buy' else 'buy'
+                        if sl_price:
+                            ex.create_order(ccxt_symbol, 'STOP_MARKET', opposite_side, amount, None, {
+                                'stopPrice': sl_price,
+                                'reduceOnly': True
+                            })
+                            logger.info(f"[LIVE_SL] Stop Loss placed at {sl_price}")
+                        if tp_price:
+                            ex.create_order(ccxt_symbol, 'TAKE_PROFIT_MARKET', opposite_side, amount, None, {
+                                'stopPrice': tp_price,
+                                'reduceOnly': True
+                            })
+                            logger.info(f"[LIVE_TP] Take Profit placed at {tp_price}")
+                    except Exception as e:
+                        logger.error(f"Failed to attach SL/TP orders: {e}")
+
+                return {
+                    "success": True,
+                    "execution_source": "live",
+                    "exchange_status": "open",
+                    "info": order.get('info', 'SUCCESS'),
+                    "order_id": order.get('id')
+                }
+            except Exception as e:
+                logger.error(f"Live order failed on {exchange_name}: {e}")
+                return {"success": False, "error": str(e)}
+        else:
+            # Hard-Lock: Log but do not dispatch
+            logger.info(f"[DISPATCH_LOCK_v1.9.4] {'LIVE_BLOCKED' if not is_simulated else 'SIM'} {exchange_name} | {side} {amount} {ccxt_symbol} | Type: {order_type} | Params: {params}")
+            
+            # Simulate success for the UI
+            return {
+                "success": True, 
+                "execution_source": "simulated",
+                "exchange_status": None,
+                "info": "SIMULATED_SUCCESS_v1.9.4", 
+                "order_id": f"sim_{exchange_name.lower()}_{int(time.time())}"
+            }
 
     def get_active_positions(self) -> List[Dict[str, Any]]:
         all_positions = []

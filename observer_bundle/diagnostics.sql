@@ -27,7 +27,6 @@ SELECT COUNT(*) as stuck_signals
 FROM signals
 WHERE outcome IS NULL
   AND ts < NOW() - INTERVAL '24 hours';
-
 -- Task 4B: Recent outcome tracker resolution activity
 SELECT outcome, COUNT(*) as count, 
        MAX(ts) as most_recent

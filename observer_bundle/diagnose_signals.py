@@ -34,7 +34,14 @@ def check_signals():
 
     print("\n--- RECENT SCAN STATUS ---")
     cur.execute("""
-        SELECT event, details->>'duration_seconds' as dur, details->>'candidates_found' as cands, to_char(ts, 'HH24:MI:SS') as time
+        SELECT
+            event,
+            details->>'duration' as dur,
+            details->>'pairs_processed' as pairs_processed,
+            details->>'setups_viable_pre_phase2' as viable_pre_phase2,
+            details->>'setups_blocked_phase2' as blocked_phase2,
+            details->>'signals_emitted' as signals_emitted,
+            to_char(ts, 'HH24:MI:SS') as time
         FROM system_logs
         WHERE event IN ('scan_start', 'scan_complete')
         ORDER BY ts DESC

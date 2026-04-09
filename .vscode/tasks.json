@@ -1,0 +1,54 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Start Idim Ikang Stack",
+			"type": "shell",
+			"command": "wsl",
+			"args": [
+				"bash",
+				"-lc",
+				"set -euo pipefail; cd /home/idona/MoStar/IdimIkang-main-1; npm run build; cd observer_bundle; . .venv/bin/activate; set -a; . ./.env; set +a; python funding_collector.py & python oi_collector.py & python ls_ratio_collector.py & python -m uvicorn api:app --host 0.0.0.0 --port 8787 & python scanner.py & python outcome_tracker.py --loop & python auto_executor.py & wait"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			}
+		},
+		{
+			"label": "Stop Idim Ikang Stack",
+			"type": "shell",
+			"command": "wsl",
+			"args": [
+				"bash",
+				"-lc",
+				"pkill -f '/home/idona/MoStar/IdimIkang-main-1' || true; pkill -f 'observer_bundle' || true"
+			],
+			"problemMatcher": [],
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			}
+		},
+		{
+			"label": "sqlproj: Build idim_ikang",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"//wsl.localhost/Ubuntu/home/idona/MoStar/IdimIkang-main-1/idim_ikang/idim_ikang.sqlproj"
+			],
+			"problemMatcher": "$sqlproj-problem-matcher",
+			"isBackground": true,
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "Builds the idim_ikang SQL project"
+		}
+	]
+}

@@ -14,9 +14,9 @@ LIMIT 25;
 -- Gate rejection breakdown since last restart
 SELECT
     event,
-    details->>'pair'  AS pair,
-    details->>'side'  AS side,
-    details->>'btc'   AS btc_regime,
+    details ->> 'pair' AS pair,
+    details ->> 'side' AS side,
+    details ->> 'btc' AS btc_regime,
     to_char(ts, 'HH24:MI:SS') AS time
 FROM system_logs
 WHERE event IN (

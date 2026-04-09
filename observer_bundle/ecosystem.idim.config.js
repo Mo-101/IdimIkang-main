@@ -47,6 +47,21 @@ module.exports = {
       }
     },
     {
+      name: "idim-auto-executor",
+      cwd: "/home/idona/MoStar/IdimIkang-main/observer_bundle",
+      script: "/home/idona/MoStar/IdimIkang-main/observer_bundle/.venv/bin/python",
+      args: "auto_executor.py",
+      interpreter: "none",
+      autorestart: true,
+      watch: false,
+      max_restarts: 20,
+      restart_delay: 5000,
+      time: true,
+      env: {
+        PYTHONUNBUFFERED: "1"
+      }
+    },
+    {
       name: "idim-dashboard",
       cwd: "/home/idona/MoStar/IdimIkang-main",
       script: "npm",

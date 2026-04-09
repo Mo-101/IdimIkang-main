@@ -27,7 +27,10 @@ CREATE TABLE IF NOT EXISTS long_short_ratios (
 );
 
 -- 2. Create recommended indexes
-CREATE INDEX IF NOT EXISTS idx_signals_pair_ts ON signals(exchange, pair, ts);
+ALTER TABLE signals
+ADD COLUMN IF NOT EXISTS exchange TEXT NOT NULL DEFAULT 'BINANCE';
+
+CREATE INDEX IF NOT EXISTS idx_signals_exchange_pair_ts ON signals(exchange, pair, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_funding_pair_ts ON funding_rates(exchange, pair, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_oi_pair_ts ON open_interest_snapshots(exchange, pair, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_ls_pair_ts ON long_short_ratios(exchange, pair, ts DESC);
