@@ -69,9 +69,13 @@ class ExchangeHub:
         
         configs = {
             "binance": {
-                "apiKey": os.getenv("BINANCE_API_KEY"),
-                "secret": os.getenv("BINANCE_API_SECRET"),
-                "options": {"defaultType": "future", "adjustForTimeDifference": True}
+                "apiKey": (os.getenv("BINANCE_API_KEY") or "").strip(" '\""),
+                "secret": (os.getenv("BINANCE_API_SECRET") or "").strip(" '\""),
+                "options": {
+                    "defaultType": "future", 
+                    "adjustForTimeDifference": True,
+                    "recvWindow": 10000
+                }
             },
             "bybit": {
                 "apiKey": os.getenv("BYBIT_API_KEY"),

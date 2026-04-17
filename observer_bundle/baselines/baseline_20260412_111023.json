@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-04-12T11:10:12.167240+00:00",
+  "label": "post-fix-clean-baseline",
+  "gate_status": "LOCKED (default=false, IRON_GATE assertion active)",
+  "collectors": {
+    "funding": "2026-04-12 13:48:42.292033",
+    "oi": "2026-04-12 14:03:18.221083",
+    "ls": "2026-04-12 14:03:19.135326"
+  },
+  "signals": {
+    "total": 159,
+    "resolved": 158,
+    "wins": 64,
+    "losses": 78,
+    "unresolved": 1,
+    "last_signal": "2026-04-12 10:17:32.861539+03:00",
+    "training_records": 63785
+  },
+  "performance": {
+    "win_rate": 40.51,
+    "resolved_count": 158,
+    "profit_factor": 0.4923,
+    "gross_profit_r": 38.4,
+    "gross_loss_r": 78.0
+  },
+  "pm2": {
+    "funding-collector": {"status": "online", "restarts": 0, "memory_mb": 37.3},
+    "idim-api": {"status": "online", "restarts": 9, "memory_mb": 144.2},
+    "idim-auto-executor": {"status": "online", "restarts": 239, "memory_mb": 77.9},
+    "idim-outcome-tracker": {"status": "online", "restarts": 168, "memory_mb": 87.8},
+    "idim-scanner": {"status": "online", "restarts": 16, "memory_mb": 106.6},
+    "ls-ratio-collector": {"status": "online", "restarts": 1, "memory_mb": 38.0},
+    "oi-collector": {"status": "online", "restarts": 1, "memory_mb": 37.7},
+    "mostar-api-ingress": {"status": "online", "restarts": 4, "memory_mb": 106.8},
+    "mostar-core-api": {"status": "online", "restarts": 6, "memory_mb": 128.2},
+    "mostar-frontend": {"status": "online", "restarts": 65, "memory_mb": 56.9},
+    "mostar-ollama": {"status": "stopped", "restarts": 10, "memory_mb": 0},
+    "mostar-orchestrator": {"status": "online", "restarts": 4, "memory_mb": 66.1},
+    "mostar-telegram": {"status": "online", "restarts": 6, "memory_mb": 78.5}
+  }
+}

@@ -159,11 +159,13 @@ def resolve_signal(sig: dict) -> tuple[str | None, float | None, dict | None]:
     trailing_sl = sig.get("trailing_sl")
     current_sl = float(trailing_sl) if trailing_sl is not None else float(sig["stop_loss"])
 
-    # Adverse Excursion Tracking (MAE)
-    max_adv_pct = float(sig.get("adverse_excursion") or 0.0)
+    # Adverse Excursion Tracking (MAE) in R-multiples
+    max_adv_r = float(sig.get("adverse_excursion") or 0.0)
+    initial_sl = float(sig["stop_loss"])
+    r_dist = abs(entry - initial_sl) if abs(entry - initial_sl) > 0 else 1e-8
 
     def _meta(exit_price: float | None = None, **extra) -> dict:
-        payload = {"adverse_excursion": max_adv_pct}
+        payload = {"adverse_excursion": max_adv_r}
         if exit_price is not None:
             payload["exit_price"] = float(exit_price)
             payload["pnl_pct"] = _calc_pnl_pct(entry, float(exit_price), side)
@@ -173,9 +175,9 @@ def resolve_signal(sig: dict) -> tuple[str | None, float | None, dict | None]:
     for _, row in df.iterrows():
         high, low = float(row["high"]), float(row["low"])
 
-        # Track maximum adverse excursion
-        current_adv = (entry - low) / entry * 100.0 if side == "LONG" else (high - entry) / entry * 100.0
-        max_adv_pct = max(max_adv_pct, current_adv)
+        # Track maximum adverse excursion in R-multiples
+        current_adv_r = (entry - low) / r_dist if side == "LONG" else (high - entry) / r_dist
+        max_adv_r = max(max_adv_r, current_adv_r)
 
         if side == "LONG":
             # 1. Check for Stop Loss / Breakeven
@@ -213,7 +215,7 @@ def run_once():
     with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT id, signal_id, pair, ts, side, entry, stop_loss, take_profit, reason_trace, is_partial, trailing_sl, adverse_excursion
+            SELECT id, signal_id, pair, ts, side, entry, stop_loss, take_profit, reason_trace, is_partial, trailing_sl, adverse_excursion, execution_source
             FROM signals
             WHERE outcome IS NULL
             ORDER BY ts ASC
@@ -235,8 +237,9 @@ def run_once():
             
             outcome, r_mult, updates_meta = None, None, None
             
-            # 2. Check for expiry first
-            if sig_ts < expiry_threshold:
+            # 2. Check for absolute expiry ONLY for live execution. Simulated rows must process history.
+            is_live = row.get("execution_source") == "live"
+            if is_live and sig_ts < expiry_threshold:
                 outcome, r_mult = "EXPIRED", 0.0
                 updates_meta = {
                     "exit_price": float(row["entry"]),

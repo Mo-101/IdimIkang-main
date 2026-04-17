@@ -1,0 +1,10 @@
+import psycopg2
+c = psycopg2.connect("postgresql://postgres:IdimIkangLocal2026!@localhost:5433/idim_ikang")
+cur = c.cursor()
+cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='system_logs' ORDER BY ordinal_position")
+print([r[0] for r in cur.fetchall()])
+cur.execute("SELECT count(*) FROM system_logs WHERE component='scanner' AND event='cycle_complete'")
+print(f"Scanner cycle_complete entries: {cur.fetchone()[0]}")
+cur.execute("SELECT count(*) FROM system_logs WHERE component='scanner'")
+print(f"Scanner entries total: {cur.fetchone()[0]}")
+c.close()

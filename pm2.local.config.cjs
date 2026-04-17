@@ -1,4 +1,4 @@
-git push origin mainconst repoRoot = '/home/idona/MoStar/IdimIkang-main-1';
+const repoRoot = '/home/idona/MoStar/IdimIkang-main-1';
 const observerRoot = `${repoRoot}/observer_bundle`;
 const venvPython = `${observerRoot}/.venv/bin/python`;
 

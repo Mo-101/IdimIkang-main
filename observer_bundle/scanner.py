@@ -74,6 +74,13 @@ LOOKBACK_4H = int(os.environ.get("LOOKBACK_4H", "300"))
 import config
 import exchange_discovery
 
+from microstructure_client import MicrostructureClient
+from execution_intelligence import compute_execution_features
+
+# Global client to ensure session re-use for fast execution snapshotting
+_micro_client = MicrostructureClient()
+
+
 # ─── Constants ─────────────────────────────────────────────────────────────────
 LOGIC_VERSION = config.CURRENT_LOGIC_VERSION
 CONFIG_VERSION = config.CURRENT_CONFIG_VERSION
@@ -122,14 +129,73 @@ ENABLE_VOLATILITY = bool(getattr(config, "ENABLE_VOLATILITY", True))
 ENABLE_MEAN_REVERSION = bool(getattr(config, "ENABLE_MEAN_REVERSION", False))
 ENABLE_MOMENTUM = bool(getattr(config, "ENABLE_MOMENTUM", True))
 
-# Family-specific weights for bridge boost
-FAMILY_WEIGHTS = getattr(config, "FAMILY_WEIGHTS", {
-    "trend": 1.0,
-    "volatility": 1.1,
-    "mean_reversion": 0.9,
-    "momentum": 1.0,
-    "none": 0.8,
-})
+# ─── Side-Balance Coherence Doctrine (v2.0) ──────────────────────────────────
+# 1c. Side-Balance Coherence (v2.0 Doctrine)
+COHERENCE_WINDOW = 200
+COHERENCE_STABILIZING_BAND = (0.40, 0.60)
+SIDE_BALANCE_LAMBDA = 25.0  # Dynamic offset sensitivity
+MAX_COHERENCE_OFFSET = 15.0 # Max penalty/boost cap to prevent over-optimization
+COHERENCE_RESCUE_FLOOR = 40.0 # Min raw score required to receive a coherence boost
+
+class SideBalanceController:
+    def __init__(self, window_n: int = 200):
+        self.window_n = window_n
+        self.history: List[str] = []  # List of "LONG" or "SHORT"
+        self._lock = threading.Lock()
+        self.long_share = 0.5
+        self.skew = 0.0  # Positive = Long-heavy (Penalize Long, Boost Short)
+
+    def initialize(self, conn):
+        """Pre-load history from the signals table."""
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT side FROM signals ORDER BY ts DESC LIMIT %s",
+                    (self.window_n,)
+                )
+                rows = cur.fetchall()
+                with self._lock:
+                    self.history = [r[0] for r in reversed(rows)]
+                    self._recalc()
+            logging.info(f"[COHERENCE] Initialized with {len(self.history)} signals. Share: {self.long_share:.2%} Skew: {self.skew:+.1f}")
+        except Exception as e:
+            logging.error(f"[COHERENCE] Init failed: {e}")
+
+    def update(self, side: str):
+        """Add new signal side and slide window."""
+        with self._lock:
+            self.history.append(side.upper())
+            if len(self.history) > self.window_n:
+                self.history.pop(0)
+            self._recalc()
+
+    def _recalc(self):
+        if not self.history:
+            self.long_share = 0.5
+            self.skew = 0.0
+            return
+            
+        self.long_share = self.history.count("LONG") / len(self.history)
+        
+        # SKEW Formula: lambda * (share - 0.5)
+        # Result > 0 means Long-heavy -> Penalize Longs (-skew), Boost Shorts (+skew)
+        # Result < 0 means Short-heavy -> Boost Longs (+abs_skew), Penalize Shorts (-abs_skew)
+        raw_skew = SIDE_BALANCE_LAMBDA * (self.long_share - 0.5)
+        self.skew = max(-MAX_COHERENCE_OFFSET, min(MAX_COHERENCE_OFFSET, raw_skew))
+
+    def get_skew(self) -> float:
+        with self._lock:
+            return self.skew
+
+    def get_stats(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "rolling_n": len(self.history),
+                "long_share": self.long_share,
+                "skew": self.skew
+            }
+
+_side_controller = SideBalanceController(COHERENCE_WINDOW)
 
 # ─── Family-Level Telemetry (per-cycle counters) ─────────────────────────────
 # Tracks: family assignment counts, rejection reasons by family, gate kills
@@ -857,7 +923,10 @@ def _annotate_phase2_context(
 def fetch_klines(symbol: str, interval: str, limit: int) -> pd.DataFrame:
     url = f"{BINANCE_FUTURES_URL}/fapi/v1/klines"
     params = {"symbol": symbol, "interval": interval, "limit": limit}
-    r = requests.get(url, params=params, timeout=20)
+    from ops_covenant import resilient_get, infra_health
+    r = resilient_get(url, params=params, timeout=20, max_retries=3)
+    if r is None:
+        raise ConnectionError(f"fetch_klines failed after retries: {symbol} {interval}")
     r.raise_for_status()
     cols = [
         "open_time", "open", "high", "low", "close", "volume",
@@ -1295,12 +1364,13 @@ def passes_wolfram_five_cell_filter(regime: str, score: float, side: str = "") -
         return (regime, score_bucket) in allowed_sim
     
     # Live mode: use the currently configured cohort cells.
+    # Doctrine v2.0: Normalized thresholds (Standard baseline 55, UPTREND/DOWNTREND 50)
     allowed = getattr(config, "LIVE_ALLOWED_CELLS", {
         ("STRONG_DOWNTREND", 55),
         ("STRONG_UPTREND", 60),
-        ("DOWNTREND", 60),
-        ("UPTREND", 45),
-        ("RANGING", 65),
+        ("DOWNTREND", 50),
+        ("UPTREND", 50),
+        ("RANGING", 60),
     })
     return (regime, score_bucket) in allowed
 
@@ -1412,6 +1482,10 @@ def refresh_active_universe() -> None:
 def insert_signal(conn, sig: dict) -> None:
     global _LAST_SIGNAL
 
+    # Update Coherence Controller (v2.0 Doctrine)
+    _side_controller.update(sig["side"])
+
+
     reason_trace = sig.get("reason_trace", {}) or {}
     phase2_gate = sig.get("phase2_gate", reason_trace.get("phase2_gate"))
     phase2_allowed = bool(sig.get("phase2_allowed", reason_trace.get("phase2_allowed", True)))
@@ -1447,6 +1521,45 @@ def insert_signal(conn, sig: dict) -> None:
         "reason_trace": json.dumps(reason_trace, cls=_NumpyEncoder),
     }
 
+    # -- EXECUTION SNAPSHOT TIER --
+    entry = float(sig["entry"])
+    sl = float(sig["stop_loss"])
+    risk_pct = abs(entry - sl) / entry if entry > 0 else 0.01
+    target_notional_usd = config.RISK_PER_TRADE_USD / risk_pct if risk_pct > 0 else 50000.0
+
+    pair = sig["pair"]
+    side = sig["side"]
+    
+    # Synchronous block - fast fetch
+    raw_snapshot = _micro_client.fetch_snapshot(pair)
+    
+    exec_score = None
+    spread_bps = None
+    est_slippage_bps = None
+    exec_snapshot_ts = None
+    exec_features = {}
+    
+    if raw_snapshot.get("success"):
+        exec_features = compute_execution_features(raw_snapshot, target_notional_usd, side)
+        if "error" not in exec_features:
+            # We enforce the latency limit sanity check (skip saving score if > 2000ms as instructed)
+            latency = exec_features.get("latency_ms", 0)
+            if latency <= 2000:
+                exec_score = exec_features.get("exec_score")
+                spread_bps = exec_features.get("spread_bps")
+                est_slippage_bps = exec_features.get("est_slippage_bps")
+                exec_snapshot_ts = sig["ts"]
+            else:
+                logger.warning(f"Snapshot latency {latency}ms exceeded 2000ms bound for {pair}, discarding score.")
+        else:
+            logger.warning(f"Exec feature compute failed for {pair}: {exec_features['error']}")
+
+    db_payload["spread_bps"] = spread_bps
+    db_payload["est_slippage_bps"] = est_slippage_bps
+    db_payload["execution_score"] = exec_score
+    db_payload["execution_snapshot_ts"] = exec_snapshot_ts
+
+
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -1454,19 +1567,45 @@ def insert_signal(conn, sig: dict) -> None:
                 signal_id, pair, ts, side, entry, stop_loss, take_profit,
                 score, regime, market_regime, btc_regime, signal_hour_utc,
                 phase2_gate, phase2_allowed, phase2_score_multiplier,
-                setup_score, execution_score, policy_version, policy_activated_at,
+                setup_score, execution_score, spread_bps, est_slippage_bps, execution_snapshot_ts,
+                policy_version, policy_activated_at,
                 signal_family, reason_trace, logic_version, config_version
             ) VALUES (
                 %(signal_id)s, %(pair)s, %(ts)s, %(side)s, %(entry)s,
                 %(stop_loss)s, %(take_profit)s, %(score)s, %(regime)s,
                 %(market_regime)s, %(btc_regime)s, %(signal_hour_utc)s,
                 %(phase2_gate)s, %(phase2_allowed)s, %(phase2_score_multiplier)s,
-                %(setup_score)s, %(execution_score)s, %(policy_version)s, %(policy_activated_at)s,
+                %(setup_score)s, %(execution_score)s, %(spread_bps)s, %(est_slippage_bps)s, %(execution_snapshot_ts)s,
+                %(policy_version)s, %(policy_activated_at)s,
                 %(signal_family)s, %(reason_trace)s::jsonb, %(logic_version)s, %(config_version)s
             ) ON CONFLICT (signal_id) DO NOTHING
             """,
             db_payload,
         )
+
+        if exec_snapshot_ts is not None and "error" not in exec_features:
+            # Store full microstructure snapshot
+            cur.execute(
+                """
+                INSERT INTO execution_snapshots (
+                    signal_id, ts, best_bid, best_ask, mid_price, spread_bps,
+                    bid_depth_usd_1pct, ask_depth_usd_1pct, depth_imbalance, est_slippage_bps,
+                    last_1m_range_bps, last_1m_trade_imbalance, latency_ms, exec_score
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s
+                ) ON CONFLICT (signal_id) DO NOTHING
+                """,
+                (
+                    sig["signal_id"], exec_snapshot_ts,
+                    exec_features.get("best_bid"), exec_features.get("best_ask"),
+                    exec_features.get("mid_price"), exec_features.get("spread_bps"),
+                    exec_features.get("bid_depth_usd_1pct"), exec_features.get("ask_depth_usd_1pct"),
+                    exec_features.get("depth_imbalance"), exec_features.get("est_slippage_bps"),
+                    exec_features.get("last_1m_range_bps"), exec_features.get("latency_ms"),
+                    exec_features.get("exec_score")
+                )
+            )
+
         conn.commit()
     _LAST_SIGNAL = {
         **sig,
@@ -1612,7 +1751,7 @@ def _classify_signal_family(latest: pd.Series, df15: pd.DataFrame, regime: str, 
     # Scoring: squeeze OR (atr_expansion + volume surge)
     is_volatility = False
     if ENABLE_VOLATILITY:
-        is_volatility = (
+    is_volatility = (
             (ind['recent_squeeze_fire'] or ind['squeeze_fired']) and
             ind['vol_ratio'] >= 1.5
         ) or (
@@ -1696,15 +1835,43 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
         
         latest = df15.iloc[-1]
         
-        # 2. Gate Validation
+        # Base scores (Mock alpha for compute phase)
+        long_score,  long_trace  = score_long_signal(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
+        short_score, short_trace = score_short_signal(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
+
+        # 2. Dynamic Coherence Tuning (v2.0 Doctrine - Push/Pull Symmetry)
+        skew = _side_controller.get_skew()
+        
+        # Capture raw scores before doctrine adjustment
+        long_score_raw  = long_score
+        short_score_raw = short_score
+        
+        # Apply Symmetric Field: subtract skew from Longs, add skew to Shorts
+        # Positive Skew (Long-heavy) -> Longs penalized (-), Shorts boosted (+)
+        # Negative Skew (Short-heavy) -> Longs boosted (+), Shorts penalized (-)
+        long_score_coh  = long_score_raw - skew
+        short_score_coh = short_score_raw + skew
+        
+        # Enforce "Do No Harm" Floor: Boost cannot rescue garbage (Score < 40)
+        # If boosting Longs (skew < 0)
+        if skew < 0 and long_score_raw < COHERENCE_RESCUE_FLOOR:
+            long_adj = long_score_raw # No boost
+        else:
+            long_adj = long_score_coh
+            
+        # If boosting Shorts (skew > 0)
+        if skew > 0 and short_score_raw < COHERENCE_RESCUE_FLOOR:
+            short_adj = short_score_raw # No boost
+        else:
+            short_adj = short_score_coh
+            
+        long_score, short_score = long_adj, short_adj
+
+        # 3. Gate Validation (Soft Penalties)
         if (time.time() - latest["close_time"].timestamp()) > DATA_FRESHNESS_MAX_SECONDS:
             return _result_payload()
         if len(df15) < SCANNER_WARMUP_BARS:
             return _result_payload()
-
-        # Base scores (Mock alpha for compute phase)
-        long_score,  long_trace  = score_long_signal(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
-        short_score, short_trace = score_short_signal(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
 
         # Log zero scores to identify blockers (exhaustion, etc.)
         if long_score == 0.0 and long_trace.get("reasons_fail"):
@@ -2233,7 +2400,45 @@ def scan_once() -> None:
                 candidates.append(candidate)
 
             selected = select_top_ranked_wolfram_signals(candidates)
+            # ── v1.5 Filter Patch: pre-emission gates ──────────────
+            _V15_BLOCKED_FAMILIES = {"VOLATILITY", "volatility"}
+            _V15_TREND_MIN_SCORE = 60.0
+            emitted = []
             for s in selected:
+                _fam = s.get("signal_family", "none")
+                _regime = s.get("regime", "")
+                _score = float(s.get("score", 0))
+                _pair = s["pair"]
+                _side = s["side"]
+
+                # Gate 1 — RANGING regime has no edge (25% WR, -16.4R)
+                if _regime == "RANGING":
+                    logger.info(
+                        "[GATE_BLOCKED] reason=ranging_regime pair=%s side=%s score=%.2f regime=%s family=%s",
+                        _pair, _side, _score, _regime, _fam,
+                    )
+                    continue
+
+                # Gate 2 — VOLATILITY family suspended (0/3, no basis)
+                if _fam in _V15_BLOCKED_FAMILIES:
+                    logger.info(
+                        "[GATE_BLOCKED] reason=blocked_family pair=%s side=%s score=%.2f regime=%s family=%s",
+                        _pair, _side, _score, _regime, _fam,
+                    )
+                    continue
+
+                # Gate 3 — TREND family score floor (loss avg 55.36, win avg 62.18)
+                if _fam in ("TREND", "trend") and _score < _V15_TREND_MIN_SCORE:
+                    logger.info(
+                        "[GATE_BLOCKED] reason=trend_score_floor pair=%s side=%s score=%.2f regime=%s family=%s",
+                        _pair, _side, _score, _regime, _fam,
+                    )
+                    continue
+
+                emitted.append(s)
+            # ── end v1.5 Filter Patch ──────────────────────────────
+
+            for s in emitted:
                 sig = build_signal(
                     s["pair"], s["side"], s["latest"], s["regime"], s["score"], s["reason_trace"],
                     signal_family=s.get("signal_family", "none"),
@@ -2269,14 +2474,25 @@ def scan_once() -> None:
             duration = time.time() - started
             _LAST_SCAN_TS = started
             
+            # Coherence Monitoring (v2.0 Doctrine - Push/Pull)
+            coh = _side_controller.get_stats()
+            skew_label = "L-Heavy" if coh['skew'] > 0 else "S-Heavy" if coh['skew'] < 0 else "Neutral"
+            logging.info(
+                f"[COHERENCE] long_share={coh['long_share']:.1%} | skew={coh['skew']:+.1f} ({skew_label}) | "
+                f"window={coh['rolling_n']}/{COHERENCE_WINDOW}"
+            )
+
             # Family-level telemetry summary (strategic visibility)
             _log_family_telemetry()
+
+
+            _v15_blocked = len(selected) - len(emitted)
             
             # Heartbeat Summary
             logging.info(
                 f"[CYCLE COMPLETE] universe={len(PAIRS)} | "
                 f"pairs_processed={pairs_processed} | viable_pre_phase2={setups_viable_pre_phase2} | "
-                f"blocked_phase2={setups_blocked_phase2} | signals_emitted={len(selected)} | "
+                f"blocked_phase2={setups_blocked_phase2} | v15_gate_blocked={_v15_blocked} | signals_emitted={len(emitted)} | "
                 f"worker_rejected={rejected_count} | errors={error_count} | "
                 f"duration={duration:.2f}s | next={SCAN_INTERVAL_SECONDS}s"
             )
@@ -2286,7 +2502,8 @@ def scan_once() -> None:
                 "pairs_processed": int(pairs_processed),
                 "setups_viable_pre_phase2": int(setups_viable_pre_phase2),
                 "setups_blocked_phase2": int(setups_blocked_phase2),
-                "signals_emitted": int(len(selected)),
+                "v15_gate_blocked": int(_v15_blocked),
+                "signals_emitted": int(len(emitted)),
                 "worker_rejected": int(rejected_count),
                 "errors": int(error_count),
                 "legacy_candidates": int(passed_count),
@@ -2321,7 +2538,13 @@ def main() -> None:
     _init_pool()
     _ensure_training_table()  # Auto-create training table if missing
     _ensure_signal_measurement_schema()
+    
+    # Initialize Side-Balance Coherence Controller (v2.0 Doctrine)
+    with db_conn() as conn:
+        _side_controller.initialize(conn)
+        
     refresh_active_universe()
+
     
     # Handshake
     mode_suffix = (

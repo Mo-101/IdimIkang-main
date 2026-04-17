@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS signals (
     phase2_score_multiplier NUMERIC,
     setup_score NUMERIC,
     execution_score NUMERIC,
+    spread_bps NUMERIC,
+    est_slippage_bps NUMERIC,
+    execution_snapshot_ts TIMESTAMPTZ,
     policy_version TEXT,
     policy_activated_at TIMESTAMPTZ,
     signal_family TEXT DEFAULT 'none',
@@ -243,6 +246,31 @@ CREATE INDEX IF NOT EXISTS idx_training_candidates_rejection_gate
 CREATE INDEX IF NOT EXISTS idx_training_candidates_outcome_label
     ON training_candidates (outcome_label, ts DESC)
     WHERE outcome_label IS NOT NULL;
+
+-- =========================
+-- execution_snapshots (v1.0)
+-- =========================
+-- Captures raw microstructure at the precise time of signal emission
+CREATE TABLE IF NOT EXISTS execution_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    signal_id UUID NOT NULL UNIQUE,
+    ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    best_bid NUMERIC,
+    best_ask NUMERIC,
+    mid_price NUMERIC,
+    spread_bps NUMERIC,
+    bid_depth_usd_1pct NUMERIC,
+    ask_depth_usd_1pct NUMERIC,
+    depth_imbalance NUMERIC,
+    est_slippage_bps NUMERIC,
+    last_1m_range_bps NUMERIC,
+    last_1m_trade_imbalance NUMERIC NULL,
+    latency_ms NUMERIC,
+    exec_score NUMERIC
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_snapshots_signal_id
+    ON execution_snapshots (signal_id);
 
 -- =========================
 -- signal_context_calibration

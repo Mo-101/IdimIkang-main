@@ -47,15 +47,23 @@ SSE_MAX_CONNECTIONS = int(os.environ.get("SSE_MAX_CONNECTIONS", "5"))
 # Database
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# ── Operational Covenant ──────────────────────────────────────────────────
+# Env validation + execution doctrine + infra health
+# Triple-gate: ENABLE_LIVE_TRADING + LIVE_TRADING_UNLOCK_TOKEN + token prefix
+from ops_covenant import enforce_execution_doctrine, covenant_startup, infra_health
+
+_COVENANT_STATUS = covenant_startup()
+
+# 2. Live Trading Toggle (v1.9.4) — Doctrine-enforced
+_DOCTRINE_LIVE, _DOCTRINE_REASON = enforce_execution_doctrine()
+ENABLE_LIVE_TRADING = _DOCTRINE_LIVE
+
 # ─── Hardening Parameters ────────────────────────────────────────────────────
 
 # 1. Accelerator Performance (v1.9.5)
 SCANNER_WORKERS = int(os.environ.get("SCANNER_WORKERS", "8"))
 SCANNER_CYCLE_TIMEOUT_SECONDS = int(os.environ.get("SCANNER_CYCLE_TIMEOUT_SECONDS", "45"))
 SCANNER_REFRESH_UNIVERSE_MINUTES = int(os.environ.get("SCANNER_REFRESH_UNIVERSE_MINUTES", "15"))
-
-# 2. Live Trading Toggle (v1.9.4)
-ENABLE_LIVE_TRADING = os.environ.get("ENABLE_LIVE_TRADING", "true").lower() == "true"
 
 # 3. Warmup floor: minimum bars required before a signal can be emitted
 SCANNER_WARMUP_BARS = int(os.environ.get("SCANNER_WARMUP_BARS", "100"))
@@ -110,7 +118,7 @@ if ENABLE_LIVE_TRADING:
         }
     else:
         SCAN_PROFILE = "live_strict_v1"
-        MIN_SIGNAL_SCORE = 60
+        MIN_SIGNAL_SCORE = 55  # Normalize baseline to 55
         ADX_MIN_THRESHOLD = 20
         ATR_STRETCH_MAX = 1.5
         REQUIRE_SQUEEZE_GATE = True
@@ -122,9 +130,9 @@ if ENABLE_LIVE_TRADING:
         LIVE_ALLOWED_CELLS = {
             ("STRONG_DOWNTREND", 55),
             ("STRONG_UPTREND", 60),
-            ("DOWNTREND", 60),
-            ("UPTREND", 45),
-            ("RANGING", 65),
+            ("DOWNTREND", 50),
+            ("UPTREND", 50),
+            ("RANGING", 60),
         }
 else:
     # Sim loose thresholds for data collection (permissive)
@@ -164,6 +172,14 @@ BLOCK_AGAINST_REGIME = True  # LONG in DOWNTREND or SHORT in UPTREND → reject
 # 1b. Phase 2 execution gating (real-data path only)
 # Training coverage remains unchanged; these controls only affect final candidate survival.
 BLOCK_RANGING_LONG = True
+
+# 1c. Side-Balance Coherence (v2.0 Doctrine)
+COHERENCE_WINDOW = 200
+COHERENCE_STABILIZING_BAND = (0.40, 0.60)
+SIDE_BALANCE_LAMBDA = 25.0  # Dynamic offset sensitivity
+MAX_COHERENCE_OFFSET = 15.0 # Max penalty/boost cap to prevent over-optimization
+COHERENCE_RESCUE_FLOOR = 40.0 # Min raw score required to receive a coherence boost
+
 
 if TEMP_DATA_BURST_ACTIVE and ENABLE_LIVE_TRADING:
     REGIME_SIDE_MULTIPLIER = {

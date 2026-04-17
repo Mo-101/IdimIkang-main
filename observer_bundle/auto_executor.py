@@ -84,6 +84,15 @@ async def auto_execution_daemon():
     cur = conn.cursor()
     cur.execute("LISTEN new_signal;")
     
+    # HARD-LOCK ASSERTION: Covenant doctrine at daemon startup
+    from ops_covenant import covenant_startup, infra_health as _infra
+    _covenant = covenant_startup()
+    if config.ENABLE_LIVE_TRADING:
+        logger.critical("[DOCTRINE] ⚠️ LIVE DISPATCH ACTIVE — Triple-gate unlocked. Token verified.")
+    else:
+        logger.info(f"[DOCTRINE] Gate locked. SIM mode only. Reason: {config._DOCTRINE_REASON}")
+    logger.info(f"[DOCTRINE] Infra health: {_infra.overall_health():.0%}")
+    
     logger.info("Auto-Execution Daemon listening for 'new_signal' notifications...")
     
     hub = get_hub()
