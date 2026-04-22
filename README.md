@@ -1,7 +1,3 @@
-<div align="center">
-  <img width="1200" height="475" alt="Idim Ikang banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 # Idim Ikang: Sovereign Market Observer
 
 **Idim Ikang** is a two-sided, highly instrumented crypto signal execution engine and observer stack. It is built around the **Sovereign Coherence v2.0 Doctrine**, dynamically seeking true 60-40 operational parity across long and short spectrums. 
