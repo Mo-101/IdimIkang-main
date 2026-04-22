@@ -1,0 +1,157 @@
+Loaded 390 closed trades from signals.
+
+========================================================================
+0. GLOBAL BASELINE
+========================================================================
+n          390.000
+wr%         38.200
+avg_r       -0.389
+total_r   -151.600
+
+========================================================================
+1. SIDE SPLIT
+========================================================================
+           n   wr%  avg_r  total_r
+side                              
+LONG   307.0  39.4 -0.369   -113.4
+SHORT   83.0  33.7 -0.460    -38.2
+
+========================================================================
+2. REGIME x FAMILY x SIDE — the pocket map (min n=5)
+========================================================================
+          regime         family  side     n  wr%  avg_r  total_r                verdict
+  STRONG_UPTREND          trend  LONG  12.0 58.3 -0.067     -0.8             slow bleed
+  STRONG_UPTREND mean_reversion  LONG   8.0 50.0 -0.200     -1.6             slow bleed
+         UPTREND       momentum  LONG   8.0 50.0 -0.200     -1.6             slow bleed
+STRONG_DOWNTREND      breakdown SHORT   7.0 28.6 -0.543     -3.8 KILL - block at source
+  STRONG_UPTREND       momentum  LONG   9.0 33.3 -0.467     -4.2 KILL - block at source
+         RANGING      breakdown SHORT   6.0 16.7 -0.733     -4.4 KILL - block at source
+         RANGING           NONE SHORT  10.0 30.0 -0.520     -5.2 KILL - block at source
+         UPTREND          trend  LONG  30.0 40.0 -0.360    -10.8 KILL - block at source
+         RANGING           NONE  LONG  17.0 17.6 -0.718    -12.2 KILL - block at source
+         UPTREND  failed_bounce SHORT  51.0 41.2 -0.341    -17.4 KILL - block at source
+         UPTREND           NONE  LONG  84.0 40.5 -0.352    -29.6 KILL - block at source
+  STRONG_UPTREND           NONE  LONG 135.0 40.0 -0.360    -48.6 KILL - block at source
+
+========================================================================
+3. SCORE BUCKETS — does raising the floor save us?
+========================================================================
+score_bucket  side    n  wr%  avg_r  total_r
+         <40  LONG 55.0 36.4 -0.418    -23.0
+         <40 SHORT 12.0 33.3 -0.467     -5.6
+       40-49  LONG 77.0 44.2 -0.294    -22.6
+       40-49 SHORT 36.0 47.2 -0.244     -8.8
+       50-54  LONG 62.0 37.1 -0.406    -25.2
+       50-54 SHORT  6.0  0.0 -1.000     -6.0
+       55-59  LONG 86.0 34.9 -0.442    -38.0
+       55-59 SHORT 19.0 21.1 -0.663    -12.6
+         60+  LONG 27.0 51.9 -0.170     -4.6
+         60+ SHORT 10.0 30.0 -0.520     -5.2
+
+========================================================================
+4. NONE FAMILY ISOLATION — is it noise or signal?
+========================================================================
+Total NONE trades: 252  (64.6% of volume)
+                            n   wr%  avg_r  total_r
+regime           side                              
+DOWNTREND        LONG     1.0   0.0 -1.000     -1.0
+                 SHORT    1.0   0.0 -1.000     -1.0
+RANGING          LONG    17.0  17.6 -0.718    -12.2
+                 SHORT   10.0  30.0 -0.520     -5.2
+STRONG_DOWNTREND SHORT    1.0   0.0 -1.000     -1.0
+STRONG_UPTREND   LONG   135.0  40.0 -0.360    -48.6
+                 SHORT    3.0   0.0 -1.000     -3.0
+UPTREND          LONG    84.0  40.5 -0.352    -29.6
+
+========================================================================
+5. BTC-MARKET REGIME ALIGNMENT — does agreement matter?
+========================================================================
+                   n   wr%  avg_r  total_r
+aligned side                              
+False   LONG   161.0  37.3 -0.404    -65.0
+        SHORT   39.0  25.6 -0.590    -23.0
+True    LONG   146.0  41.8 -0.332    -48.4
+        SHORT   44.0  40.9 -0.345    -15.2
+
+========================================================================
+6. UTC HOUR BANDS — validate the graveyard zone
+========================================================================
+                           n   wr%  avg_r  total_r
+hour_band        side                             
+00-05 asia       LONG   86.0  34.9 -0.442    -38.0
+                 SHORT   8.0  50.0 -0.200     -1.6
+06-11 euro       LONG   78.0  37.2 -0.405    -31.6
+                 SHORT  21.0  23.8 -0.619    -13.0
+12-17 us-overlap LONG   90.0  42.2 -0.324    -29.2
+                 SHORT  27.0  33.3 -0.467    -12.6
+18-23 evening    LONG   53.0  45.3 -0.275    -14.6
+                 SHORT  27.0  37.0 -0.407    -11.0
+
+========================================================================
+7. HOUR-BY-HOUR WIN RATE (side-agnostic)
+========================================================================
+ hour    n  wr%  avg_r  total_r    sparkline
+    0 12.0 16.7 -0.733     -8.8          |||
+    1 21.0 38.1 -0.390     -8.2      |||||||
+    2 12.0 50.0 -0.200     -2.4   ||||||||||
+    3 12.0 25.0 -0.600     -7.2        |||||
+    4 10.0 30.0 -0.520     -5.2       ||||||
+    5 27.0 44.4 -0.289     -7.8     ||||||||
+    6 12.0 16.7 -0.733     -8.8          |||
+    7 21.0 14.3 -0.771    -16.2           ||
+    8 19.0 36.8 -0.411     -7.8      |||||||
+    9 11.0 45.5 -0.273     -3.0    |||||||||
+   10 20.0 45.0 -0.280     -5.6    |||||||||
+   11 16.0 50.0 -0.200     -3.2   ||||||||||
+   12 12.0 33.3 -0.467     -5.6       ||||||
+   13  9.0 22.2 -0.644     -5.8         ||||
+   14 11.0 36.4 -0.418     -4.6      |||||||
+   15 32.0 46.9 -0.250     -8.0    |||||||||
+   16 33.0 39.4 -0.370    -12.2      |||||||
+   17 20.0 45.0 -0.280     -5.6    |||||||||
+   18  9.0 44.4 -0.289     -2.6     ||||||||
+   19  3.0  0.0 -1.000     -3.0             
+   20 11.0 27.3 -0.564     -6.2        |||||
+   21 13.0 61.5 -0.015     -0.2 ||||||||||||
+   22 20.0 40.0 -0.360     -7.2     ||||||||
+   23 24.0 45.8 -0.267     -6.4    |||||||||
+
+========================================================================
+8. TOP 10 EDGE POCKETS
+========================================================================
+          regime         family  side    n  wr%  avg_r  total_r                verdict
+  STRONG_UPTREND          trend  LONG 12.0 58.3 -0.067     -0.8             slow bleed
+  STRONG_UPTREND mean_reversion  LONG  8.0 50.0 -0.200     -1.6             slow bleed
+         UPTREND       momentum  LONG  8.0 50.0 -0.200     -1.6             slow bleed
+STRONG_DOWNTREND      breakdown SHORT  7.0 28.6 -0.543     -3.8 KILL - block at source
+  STRONG_UPTREND       momentum  LONG  9.0 33.3 -0.467     -4.2 KILL - block at source
+         RANGING      breakdown SHORT  6.0 16.7 -0.733     -4.4 KILL - block at source
+         RANGING           NONE SHORT 10.0 30.0 -0.520     -5.2 KILL - block at source
+         UPTREND          trend  LONG 30.0 40.0 -0.360    -10.8 KILL - block at source
+         RANGING           NONE  LONG 17.0 17.6 -0.718    -12.2 KILL - block at source
+         UPTREND  failed_bounce SHORT 51.0 41.2 -0.341    -17.4 KILL - block at source
+
+========================================================================
+9. BOTTOM 10 BLEED POCKETS
+========================================================================
+          regime        family  side     n  wr%  avg_r  total_r                verdict
+         UPTREND      momentum  LONG   8.0 50.0 -0.200     -1.6             slow bleed
+STRONG_DOWNTREND     breakdown SHORT   7.0 28.6 -0.543     -3.8 KILL - block at source
+  STRONG_UPTREND      momentum  LONG   9.0 33.3 -0.467     -4.2 KILL - block at source
+         RANGING     breakdown SHORT   6.0 16.7 -0.733     -4.4 KILL - block at source
+         RANGING          NONE SHORT  10.0 30.0 -0.520     -5.2 KILL - block at source
+         UPTREND         trend  LONG  30.0 40.0 -0.360    -10.8 KILL - block at source
+         RANGING          NONE  LONG  17.0 17.6 -0.718    -12.2 KILL - block at source
+         UPTREND failed_bounce SHORT  51.0 41.2 -0.341    -17.4 KILL - block at source
+         UPTREND          NONE  LONG  84.0 40.5 -0.352    -29.6 KILL - block at source
+  STRONG_UPTREND          NONE  LONG 135.0 40.0 -0.360    -48.6 KILL - block at source
+
+========================================================================
+10. VERDICT SUMMARY
+========================================================================
+                        buckets  trades  total_r
+verdict                                         
+slow bleed                    3    28.0     -4.0
+KILL - block at source        9   349.0   -136.2
+
+Diagnostic complete. The gates should match the map, not the theory.

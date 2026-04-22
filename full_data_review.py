@@ -13,6 +13,11 @@ DB_URL = "postgresql://postgres:IdimIkangLocal2026!@localhost:5433/idim_ikang"
 SEP  = "=" * 65
 SEP2 = "-" * 40
 
+# ── Sprint D: Activation Cutoff ──────────────────────────────
+# Only evaluate probability model performance on signals 
+# emitted after the cutover to ensure clean calibration.
+SPRINT_D_ACTIVATED_AT = "2026-04-18 20:20:00Z"
+
 def pct(part, total):
     return f"{part/total*100:.1f}%" if total > 0 else "n/a"
 
@@ -257,13 +262,305 @@ def run():
         if n > 0:
             l_pct = ls / n * 100
             s_pct = ss / n * 100
+            delta_coh = abs(ls / n - 0.5)
             status = "✅ COHERENT" if 40 <= l_pct <= 60 else "⚠️ IMBALANCED"
-            print(f"  Sample size   : {n}")
-            print(f"  Long share    : {ls} ({l_pct:.1f}%)")
-            print(f"  Short share   : {ss} ({s_pct:.1f}%)")
-            print(f"  Status        : {status}")
+            print(f"  Sample size       : {n}")
+            print(f"  Long share        : {ls} ({l_pct:.1f}%)")
+            print(f"  Short share       : {ss} ({s_pct:.1f}%)")
+            print(f"  Δ_coherence       : {delta_coh:.3f}")
+            print(f"  Status            : {status}")
         else:
             print("  No recent signals found.")
+
+    # ── 9e. EXPECTANCY BY SIDE ─────────────────────────────────
+    if total_sig > 0:
+        print("\n9e. E[R | side] — EXPECTANCY BY SIDE")
+        print(SEP2)
+        cur.execute("""
+            SELECT
+                side,
+                COUNT(*) AS trades,
+                SUM(CASE WHEN outcome ILIKE '%win%' THEN 1 ELSE 0 END) AS wins,
+                ROUND(AVG(CASE WHEN outcome IS NOT NULL THEN r_multiple END)::numeric, 4) AS avg_r
+            FROM signals
+            WHERE outcome IS NOT NULL
+            GROUP BY side
+            ORDER BY side
+        """)
+        rows = cur.fetchall()
+        print(f"  {'Side':<6} {'Trades':>7} {'Wins':>6} {'WR%':>7} {'E[R]':>8}")
+        print(f"  {'-'*6} {'-'*7} {'-'*6} {'-'*7} {'-'*8}")
+        for side, trades, wins_c, avg_r in rows:
+            wr = f"{wins_c/trades*100:.1f}%" if trades > 0 else "n/a"
+            ar = f"{avg_r:.4f}" if avg_r is not None else "   n/a"
+            print(f"  {side:<6} {trades:>7} {wins_c:>6} {wr:>7} {ar:>8}")
+
+    # ── 9f. EXPECTANCY BY REGIME × SIDE ──────────────────────
+    if total_sig > 0:
+        print("\n9f. E[R | regime, side] — REGIME × SIDE EXPECTANCY")
+        print(SEP2)
+        cur.execute("""
+            SELECT
+                COALESCE(market_regime, regime, 'unknown') AS regime_label,
+                side,
+                COUNT(*) AS trades,
+                SUM(CASE WHEN outcome ILIKE '%win%' THEN 1 ELSE 0 END) AS wins,
+                ROUND(AVG(CASE WHEN outcome IS NOT NULL THEN r_multiple END)::numeric, 4) AS avg_r
+            FROM signals
+            WHERE outcome IS NOT NULL
+            GROUP BY regime_label, side
+            ORDER BY trades DESC
+        """)
+        rows = cur.fetchall()
+        print(f"  {'Regime':<22} {'Side':<6} {'N':>4} {'WR%':>7} {'E[R]':>8}")
+        print(f"  {'-'*22} {'-'*6} {'-'*4} {'-'*7} {'-'*8}")
+        for regime_l, side, trades, wins_c, avg_r in rows:
+            wr = f"{wins_c/trades*100:.1f}%" if trades > 0 else "n/a"
+            ar = f"{avg_r:.4f}" if avg_r is not None else "   n/a"
+            print(f"  {regime_l:<22} {side:<6} {trades:>4} {wr:>7} {ar:>8}")
+
+    # ── 9g. P(emit short | downtrend) ────────────────────────
+    if total_sig > 0:
+        print("\n9g. P(emit short | downtrend)")
+        print(SEP2)
+        for r_label in ("DOWNTREND", "STRONG_DOWNTREND"):
+            cur.execute("""
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN side = 'SHORT' THEN 1 ELSE 0 END) AS shorts
+                FROM signals
+                WHERE COALESCE(market_regime, regime, 'unknown') = %s
+            """, (r_label,))
+            total_r, shorts_r = cur.fetchone()
+            p_short = f"{shorts_r/total_r*100:.1f}%" if total_r > 0 else "n/a"
+            print(f"  {r_label:<22} : {shorts_r}/{total_r} = {p_short}")
+
+    # ── 9h. EXPECTANCY BY SHORT FAMILY (SPRINT B) ────────────
+    if total_sig > 0:
+        print("\n9h. E[R | short_family] — SPRINT B ALPHA")
+        print(SEP2)
+        cur.execute("""
+            SELECT
+                COALESCE(signal_family, 'legacy') AS family,
+                COUNT(*) AS trades,
+                SUM(CASE WHEN outcome ILIKE '%win%' THEN 1 ELSE 0 END) AS wins,
+                ROUND(AVG(CASE WHEN outcome IS NOT NULL THEN r_multiple END)::numeric, 4) AS avg_r
+            FROM signals
+            WHERE side = 'SHORT'
+              AND outcome IS NOT NULL
+            GROUP BY family
+            ORDER BY trades DESC
+        """)
+        rows = cur.fetchall()
+        print(f"  {'Family':<20} {'Trades':>6} {'Wins':>6} {'WR%':>7} {'E[R]':>8}")
+        print(f"  {'-'*20} {'-'*6} {'-'*6} {'-'*7} {'-'*8}")
+        for fam, trades, wins_c, avg_r in rows:
+            wr = f"{wins_c/trades*100:.1f}%" if trades > 0 else "n/a"
+            ar = f"{avg_r:.4f}" if avg_r is not None else "   n/a"
+            print(f"  {fam:<20} {trades:>6} {wins_c:>6} {wr:>7} {ar:>8}")
+
+
+    # ── 9i. P(WIN) DECILE CALIBRATION ────────────────────────────
+    print("\n9i. P(WIN) DECILE CALIBRATION (Post-Sprint D)")
+    print(SEP2)
+    cur.execute(f"""
+        WITH base AS (
+          SELECT
+            pwin,
+            outcome,
+            r_multiple,
+            NTILE(10) OVER (ORDER BY pwin) AS decile
+          FROM signals
+          WHERE outcome IS NOT NULL
+            AND pwin IS NOT NULL
+            AND ts >= '{SPRINT_D_ACTIVATED_AT}'
+        )
+        SELECT
+          decile,
+          COUNT(*) AS trades,
+          ROUND(AVG(pwin)::numeric, 4) AS avg_pwin,
+          ROUND(AVG(CASE WHEN UPPER(outcome) IN ('WIN','LIVE_WIN','PARTIAL_WIN','LIVE_PARTIAL') THEN 1.0 ELSE 0.0 END)::numeric, 4) AS realized_wr,
+          ROUND(AVG(r_multiple)::numeric, 4) AS avg_r
+        FROM base
+        GROUP BY decile
+        HAVING COUNT(*) >= 5 -- Sample guard
+        ORDER BY decile;
+    """)
+    rows = cur.fetchall()
+    if rows:
+        print(f"  {'Decile':<6} {'Trades':>6} {'Exp P(win)':>11} {'Realized WR':>12} {'Avg R':>7}")
+        print(f"  {'-'*6} {'-'*6} {'-'*11} {'-'*12} {'-'*7}")
+        for d, t, ap, rw, ar in rows:
+            print(f"  {d:<6} {t:>6} {ap:>11.4f} {rw:>11.2%} {ar:>7.3f}")
+    else:
+        print("  Insufficient post-Sprint D data for decile calibration (< 5 trades).")
+
+    # ── 9j. PROB VS LEGACY DISCRIMINATION ──────────────────────────
+    print("\n9j. PROB VS LEGACY DISCRIMINATION (Post-Sprint D)")
+    print(SEP2)
+    cur.execute(f"""
+        WITH scored AS (
+          SELECT
+            prob_score,
+            legacy_score,
+            outcome,
+            r_multiple,
+            NTILE(5) OVER (ORDER BY prob_score) AS prob_quintile,
+            NTILE(5) OVER (ORDER BY legacy_score) AS legacy_quintile
+          FROM signals
+          WHERE outcome IS NOT NULL
+            AND prob_score IS NOT NULL
+            AND legacy_score IS NOT NULL
+            AND ts >= '{SPRINT_D_ACTIVATED_AT}'
+        )
+        SELECT
+          'Prob Score' AS model,
+          prob_quintile AS quintile,
+          COUNT(*) AS trades,
+          ROUND(AVG(CASE WHEN UPPER(outcome) IN ('WIN','LIVE_WIN','PARTIAL_WIN','LIVE_PARTIAL') THEN 1.0 ELSE 0.0 END)::numeric, 4) AS wr,
+          ROUND(AVG(r_multiple)::numeric, 4) AS avg_r
+        FROM scored
+        GROUP BY prob_quintile
+        HAVING COUNT(*) >= 3
+        UNION ALL
+        SELECT
+          'Legacy Score' AS model,
+          legacy_quintile AS quintile,
+          COUNT(*) AS trades,
+          ROUND(AVG(CASE WHEN UPPER(outcome) IN ('WIN','LIVE_WIN','PARTIAL_WIN','LIVE_PARTIAL') THEN 1.0 ELSE 0.0 END)::numeric, 4) AS wr,
+          ROUND(AVG(r_multiple)::numeric, 4) AS avg_r
+        FROM scored
+        GROUP BY legacy_quintile
+        HAVING COUNT(*) >= 3
+        ORDER BY model, quintile;
+    """)
+    rows = cur.fetchall()
+    if rows:
+        print(f"  {'Model':<12} {'Quint':>5} {'Trades':>6} {'WR%':>7} {'Avg R':>7}")
+        print(f"  {'-'*12} {'-'*5} {'-'*6} {'-'*7} {'-'*7}")
+        for m, q, t, wr, ar in rows:
+            print(f"  {m:<12} {q:>5} {t:>6} {wr*100:>6.1f}% {ar:>7.3f}")
+
+    # ── 9k. CALIBRATION BY SIDE ──────────────────────────────────
+    print("\n9k. CALIBRATION BY SIDE (Post-Sprint D)")
+    print(SEP2)
+    cur.execute(f"""
+        WITH base AS (
+          SELECT
+            side,
+            pwin,
+            outcome,
+            r_multiple,
+            NTILE(3) OVER (PARTITION BY side ORDER BY pwin) AS tertile
+          FROM signals
+          WHERE outcome IS NOT NULL
+            AND pwin IS NOT NULL
+            AND ts >= '{SPRINT_D_ACTIVATED_AT}'
+        )
+        SELECT
+          side,
+          tertile,
+          COUNT(*) AS trades,
+          ROUND(AVG(pwin)::numeric, 4) AS avg_pwin,
+          ROUND(AVG(CASE WHEN UPPER(outcome) IN ('WIN','LIVE_WIN','PARTIAL_WIN','LIVE_PARTIAL') THEN 1.0 ELSE 0.0 END)::numeric, 4) AS realized_wr
+        FROM base
+        GROUP BY side, tertile
+        HAVING COUNT(*) >= 3
+        ORDER BY side, tertile;
+    """)
+    rows = cur.fetchall()
+    if rows:
+        print(f"  {'Side':<6} {'Tert':>5} {'Trades':>7} {'Exp P(win)':>11} {'Realized WR':>11}")
+        print(f"  {'-'*6} {'-'*5} {'-'*7} {'-'*11} {'-'*11}")
+        for s, t, tr, ap, rw in rows:
+            print(f"  {s:<6} {t:>5} {tr:>7} {ap:>11.4f} {rw:>11.2%}")
+
+    # ── 9l. CALIBRATION BY REGIME × SIDE ──────────────────────────
+    print("\n9l. CALIBRATION BY REGIME × SIDE (Post-Sprint D)")
+    print(SEP2)
+    cur.execute(f"""
+        WITH base AS (
+          SELECT
+            COALESCE(market_regime, regime) AS regime,
+            side,
+            pwin,
+            outcome,
+            r_multiple,
+            NTILE(3) OVER (PARTITION BY COALESCE(market_regime, regime), side ORDER BY pwin) AS tertile
+          FROM signals
+          WHERE outcome IS NOT NULL
+            AND pwin IS NOT NULL
+            AND ts >= '{SPRINT_D_ACTIVATED_AT}'
+        )
+        SELECT
+          regime,
+          side,
+          tertile,
+          COUNT(*) AS trades,
+          ROUND(AVG(pwin)::numeric, 4) AS avg_pwin,
+          ROUND(AVG(CASE WHEN UPPER(outcome) IN ('WIN','LIVE_WIN','PARTIAL_WIN','LIVE_PARTIAL') THEN 1.0 ELSE 0.0 END)::numeric, 4) AS realized_wr
+        FROM base
+        GROUP BY regime, side, tertile
+        HAVING COUNT(*) >= 5
+        ORDER BY regime, side, tertile;
+    """)
+    rows = cur.fetchall()
+    if rows:
+        print(f"  {'Regime':<18} {'Side':<5} {'Tert':>5} {'N':>3} {'ExpWR':>7} {'RealWR':>7}")
+        print(f"  {'-'*18} {'-'*5} {'-'*5} {'-'*3} {'-'*7} {'-'*7}")
+        for rg, sd, tr, cnt, ap, rw in rows:
+            print(f"  {rg:<18} {sd:<5} {tr:>5} {cnt:>3} {ap*100:>6.1f}% {rw*100:>6.1f}%")
+
+    # ── 9m. RISK SCALE VS EDGE ────────────────────────────────────
+    print("\n9m. RISK SCALE VS EDGE (Conviction Check)")
+    print(SEP2)
+    cur.execute(f"""
+        SELECT
+          ROUND(risk_scale::numeric, 2) AS risk_scale_bucket,
+          COUNT(*) AS trades,
+          ROUND(AVG(pwin)::numeric, 4) AS avg_pwin,
+          ROUND(AVG(CASE WHEN UPPER(outcome) IN ('WIN','LIVE_WIN','PARTIAL_WIN','LIVE_PARTIAL') THEN 1.0 ELSE 0.0 END)::numeric, 4) AS realized_wr,
+          ROUND(AVG(r_multiple)::numeric, 4) AS avg_r
+        FROM signals
+        WHERE outcome IS NOT NULL
+          AND risk_scale IS NOT NULL
+          AND ts >= '{SPRINT_D_ACTIVATED_AT}'
+        GROUP BY ROUND(risk_scale::numeric, 2)
+        ORDER BY risk_scale_bucket;
+    """)
+    rows = cur.fetchall()
+    if rows:
+        print(f"  {'Scale':<6} {'Trades':>6} {'P(win)':>7} {'RealWR':>7} {'AvgR':>7}")
+        print(f"  {'-'*6} {'-'*6} {'-'*7} {'-'*7} {'-'*7}")
+        for sc, t, ap, rw, ar in rows:
+            ap=float(ap or 0); rw=float(rw or 0); ar=float(ar or 0)
+            print(f"  {sc:<6.2f} {t:>6} {ap:>7.2f} {rw*100:>6.1f}% {ar:>7.3f}")
+
+    # ── 9n. FAMILY-AWARE R:R PERFORMANCE ─────────────────────────
+    print("\n9n. FAMILY-AWARE R:R PERFORMANCE")
+    print(SEP2)
+    cur.execute(f"""
+        SELECT
+          signal_family,
+          ROUND(AVG(rr_sl_mult)::numeric, 3) AS avg_sl_mult,
+          ROUND(AVG(rr_tp_mult)::numeric, 3) AS avg_tp_mult,
+          COUNT(*) AS trades,
+          ROUND(AVG(CASE WHEN UPPER(outcome) IN ('WIN','LIVE_WIN','PARTIAL_WIN','LIVE_PARTIAL') THEN 1.0 ELSE 0.0 END)::numeric, 4) AS realized_wr,
+          ROUND(AVG(r_multiple)::numeric, 4) AS avg_r
+        FROM signals
+        WHERE outcome IS NOT NULL
+          AND rr_sl_mult IS NOT NULL
+          AND rr_tp_mult IS NOT NULL
+          AND ts >= '{SPRINT_D_ACTIVATED_AT}'
+        GROUP BY signal_family
+        ORDER BY trades DESC;
+    """)
+    rows = cur.fetchall()
+    if rows:
+        print(f"  {'Family':<16} {'SLx':>6} {'TPx':>6} {'N':>4} {'WR%':>6} {'AvgR':>7}")
+        print(f"  {'-'*16} {'-'*6} {'-'*6} {'-'*4} {'-'*6} {'-'*7}")
+        for fam, sl, tp, cnt, wr, ar in rows:
+            print(f"  {str(fam):<16} {sl:>6.2f} {tp:>6.2f} {cnt:>4} {wr*100:>5.1f}% {ar:>7.3f}")
 
     # ── 10. SIGNAL FAMILY P&L ───────────────────────────────────
     if total_sig > 0:
@@ -321,14 +618,14 @@ def run():
     print("\n12. COLLECTOR DATA (funding / OI / LS ratios)")
     print(SEP2)
 
-    for table, col, label in [
-        ("funding_rates",  "funding_rate", "Funding collector"),
-        ("open_interest",  "oi_value",     "OI collector      "),
-        ("ls_ratios",      "long_short_ratio", "LS ratio collector"),
+    for table, col, label, ts_col in [
+        ("funding_rates",  "funding_rate", "Funding collector", "funding_time"),
+        ("open_interest",  "open_interest", "OI collector      ", "timestamp"),
+        ("ls_ratios",      "long_account_ratio", "LS ratio collector", "timestamp"),
     ]:
         try:
             cur.execute(f"""
-                SELECT COUNT(*), MIN(ts), MAX(ts)
+                SELECT COUNT(*), MIN({ts_col}), MAX({ts_col})
                 FROM {table}
             """)
             cnt, mn, mx = cur.fetchone()

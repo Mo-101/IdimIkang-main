@@ -1,0 +1,293 @@
+=================================================================
+  IDIM IKANG — ALL-TIME DATA REVIEW
+  Generated: 2026-04-22 02:07 UTC
+=================================================================
+
+1. INCEPTION & TOTAL VOLUME
+----------------------------------------
+  Inception       : 2026-04-08 15:00 UTC
+  Latest record   : 2026-04-22 05:03 UTC
+  Active days     : 15
+  Span            : 326.0 hours
+  Total rows      : 201,733
+  Unique symbols  : 108
+  Avg rate        : 619 rows/hour  (~52 rows/cycle)
+
+2. DATASET MILESTONES
+----------------------------------------
+     200 rows  →  ✅ REACHED
+     500 rows  →  ✅ REACHED
+   1,000 rows  →  ✅ REACHED
+   2,000 rows  →  ✅ REACHED
+   5,000 rows  →  ✅ REACHED
+  10,000 rows  →  ✅ REACHED
+
+3. DAILY BREAKDOWN
+----------------------------------------
+  Date            Rows  Syms  Passed  Cycles~
+  ------------ ------- ----- ------- --------
+  2026-04-08     2,102    33     765       35
+  2026-04-09    14,092    39    1048      234
+  2026-04-10    22,128    40    2697      368
+  2026-04-11    15,208    38    1644      253
+  2026-04-12    16,604    37    1092      276
+  2026-04-13     8,463    37     591      141
+  2026-04-14     9,708    35     874      161
+  2026-04-15    17,138    40    1776      285
+  2026-04-16    17,407    42    2133      290
+  2026-04-17    17,238    40    1913      287
+  2026-04-18     8,299    41     753      138
+  2026-04-19    20,520    42    1140      342
+  2026-04-20    22,524    39    1070      375
+  2026-04-21     6,790    34     290      113
+  2026-04-22     3,512    32     121       58
+
+4. REJECTION GATE ANALYSIS — ALL TIME
+----------------------------------------
+  score_zero                     128,529 ( 63.7%)  ███████████████████████████████
+  volume                          29,070 ( 14.4%)  ███████
+  min_score                       20,324 ( 10.1%)  █████
+  PASSED                          17,907 (  8.9%)  ████
+  exhaustion                       3,271 (  1.6%)  
+  phase2_cooldown                  1,857 (  0.9%)  
+  phase2_ranging_long_block          327 (  0.2%)  
+  phase2_rescore_zero                125 (  0.1%)  
+  regime_block                       105 (  0.1%)  
+  phase2_dead_hour_13                 78 (  0.0%)  
+  phase2_dead_hour_0                  46 (  0.0%)  
+  phase2_dead_hour_7                  34 (  0.0%)  
+  phase2_dead_hour_19                 32 (  0.0%)  
+  phase2_dead_hour_4                  24 (  0.0%)  
+  vwap                                 3 (  0.0%)  
+  phase2_regime_side_block_STRONG_UPTREND_SHORT       1 (  0.0%)  
+
+5. SIGNAL FAMILY DISTRIBUTION — ALL TIME
+----------------------------------------
+  Family             Total  Passed   Share   PassRate
+  ---------------- ------- ------- -------  ---------
+  trend             85,734   10295   42.5%      12.0%
+  none              74,310    4366   36.8%       5.9%
+  breakdown         20,977     364   10.4%       1.7%
+  momentum           8,419    1330    4.2%      15.8%
+  mean_reversion     4,344     149    2.2%       3.4%
+  failed_bounce      4,212     689    2.1%      16.4%
+  volatility         3,737     714    1.9%      19.1%
+
+6. MARKET REGIME COVERAGE — ALL TIME
+----------------------------------------
+  STRONG_UPTREND          77,197 ( 38.3%)  pass=14.2%
+  UPTREND                 76,590 ( 38.0%)  pass=7.2%
+  RANGING                 28,965 ( 14.4%)  pass=4.0%
+  DOWNTREND               11,022 (  5.5%)  pass=0.8%
+  STRONG_DOWNTREND         7,959 (  3.9%)  pass=2.6%
+
+7. TOP 15 MOST OBSERVED SYMBOLS
+----------------------------------------
+  Symbol              Rows  Passed  PassRate
+  ---------------- ------- ------- ---------
+  ETHUSDT            6,833     599      8.8%
+  SOLUSDT            6,788     685     10.1%
+  BTCUSDT            6,787     771     11.4%
+  ZECUSDT            6,734     526      7.8%
+  TAOUSDT            6,713     144      2.1%
+  XRPUSDT            6,712     652      9.7%
+  HYPEUSDT           6,709     918     13.7%
+  1000PEPEUSDT       6,704     589      8.8%
+  BNBUSDT            6,700     581      8.7%
+  DOGEUSDT           6,697     549      8.2%
+  ADAUSDT            6,673     458      6.9%
+  AVAXUSDT           6,545     606      9.3%
+  SUIUSDT            6,543     578      8.8%
+  RAVEUSDT           6,341     741     11.7%
+  币安人生USDT           5,966     964     16.2%
+
+8. SIGNAL EMISSION RECORD (signals table)
+----------------------------------------
+  Total signals emitted    : 390
+  First signal             : 2026-04-03 22:59 UTC
+  Last signal              : 2026-04-22 02:59 UTC
+  Resolved (outcome set)   : 390 (100.0%)
+  Wins                     : 149
+  Losses                   : 241
+  Win rate                 : 38.2%
+  Avg R-multiple           : -0.3887
+
+9. EMITTED SIGNALS — REGIME × SIDE BREAKDOWN
+----------------------------------------
+  Regime                 Side     Cnt   Res  Wins    AvgR
+  ---------------------- ------ ----- ----- ----- -------
+  STRONG_UPTREND         LONG     166   166    68  -0.345
+  UPTREND                LONG     123   123    50  -0.350
+  UPTREND                SHORT     51    51    21  -0.341
+  RANGING                SHORT     17    17     4  -0.624
+  RANGING                LONG      17    17     3  -0.718
+  STRONG_DOWNTREND       SHORT      9     9     2  -0.644
+  STRONG_UPTREND         SHORT      3     3     0  -1.000
+  DOWNTREND              SHORT      3     3     1  -0.467
+  DOWNTREND              LONG       1     1     0  -1.000
+
+9b. EMITTED SIGNALS — HOUR OF DAY P&L (UTC)
+----------------------------------------
+  Hour(UTC)      N  Wins  Loss    WR%    AvgR
+  ----------- ---- ----- ----- ------ -------
+  h=16:00-16:59    28    12    16  42.9%  -0.314
+  h=05:00-05:59    24    10    14  41.7%  -0.333
+  h=23:00-23:59    20    10    10  50.0%  -0.200
+  h=07:00-07:59    20     3    17  15.0%  -0.760
+  h=10:00-10:59    20     9    11  45.0%  -0.280
+  h=15:00-15:59    20     8    12  40.0%  -0.360
+  h=01:00-01:59    19     8    11  42.1%  -0.326
+  h=08:00-08:59    18     7    11  38.9%  -0.378
+  h=22:00-22:59    17     7    10  41.2%  -0.341
+  h=11:00-11:59    15     8     7  53.3%  -0.147
+  h=21:00-21:59    13     8     5  61.5%  -0.015 ← best
+  h=17:00-17:59    13     8     5  61.5%  -0.015 ← best
+  h=06:00-06:59    12     2    10  16.7%  -0.733
+  h=12:00-12:59    11     4     7  36.4%  -0.418
+  h=14:00-14:59    11     4     7  36.4%  -0.418
+  h=02:00-02:59    11     6     5  54.5%  -0.127
+  h=00:00-00:59    10     2     8  20.0%  -0.680
+  h=09:00-09:59    10     4     6  40.0%  -0.360
+  h=04:00-04:59     8     2     6  25.0%  -0.600
+  h=20:00-20:59     8     2     6  25.0%  -0.600
+  h=03:00-03:59     7     2     5  28.6%  -0.543
+  h=13:00-13:59     5     2     3  40.0%  -0.360
+  h=18:00-18:59     3     1     2  33.3%  -0.467
+  h=19:00-19:59     1     0     1   0.0%  -1.000 ← worst
+
+9d. SOVEREIGN COHERENCE — ROLLING 200 SIDE SHARE
+----------------------------------------
+  Sample size       : 200
+  Long share        : 132 (66.0%)
+  Short share       : 68 (34.0%)
+  Δ_coherence       : 0.160
+  Status            : ⚠️ IMBALANCED
+
+9e. E[R | side] — EXPECTANCY BY SIDE
+----------------------------------------
+  Side    Trades   Wins     WR%     E[R]
+  ------ ------- ------ ------- --------
+  LONG       307    121   39.4%  -0.3694
+  SHORT       83     28   33.7%  -0.4602
+
+9f. E[R | regime, side] — REGIME × SIDE EXPECTANCY
+----------------------------------------
+  Regime                 Side      N     WR%     E[R]
+  ---------------------- ------ ---- ------- --------
+  STRONG_UPTREND         LONG    166   41.0%  -0.3446
+  UPTREND                LONG    123   40.7%  -0.3496
+  UPTREND                SHORT    51   41.2%  -0.3412
+  RANGING                SHORT    17   23.5%  -0.6235
+  RANGING                LONG     17   17.6%  -0.7176
+  STRONG_DOWNTREND       SHORT     9   22.2%  -0.6444
+  STRONG_UPTREND         SHORT     3    0.0%  -1.0000
+  DOWNTREND              SHORT     3   33.3%  -0.4667
+  DOWNTREND              LONG      1    0.0%  -1.0000
+
+9g. P(emit short | downtrend)
+----------------------------------------
+  DOWNTREND              : 3/4 = 75.0%
+  STRONG_DOWNTREND       : 9/9 = 100.0%
+
+9h. E[R | short_family] — SPRINT B ALPHA
+----------------------------------------
+  Family               Trades   Wins     WR%     E[R]
+  -------------------- ------ ------ ------- --------
+  failed_bounce            53     21   39.6%  -0.3660
+  breakdown                15      4   26.7%  -0.5733
+  none                     15      3   20.0%  -0.6800
+
+9i. P(WIN) DECILE CALIBRATION (Post-Sprint D)
+----------------------------------------
+  Insufficient post-Sprint D data for decile calibration (< 5 trades).
+
+9j. PROB VS LEGACY DISCRIMINATION (Post-Sprint D)
+----------------------------------------
+
+9k. CALIBRATION BY SIDE (Post-Sprint D)
+----------------------------------------
+
+9l. CALIBRATION BY REGIME × SIDE (Post-Sprint D)
+----------------------------------------
+
+9m. RISK SCALE VS EDGE (Conviction Check)
+----------------------------------------
+  Scale  Trades  P(win)  RealWR    AvgR
+  ------ ------ ------- ------- -------
+  0.77        1    0.00  100.0%   0.600
+  0.78        1    0.00    0.0%  -1.000
+  0.79        1    0.00    0.0%  -1.000
+  0.84        1    0.00    0.0%  -1.000
+  0.89        4    0.00   50.0%  -0.200
+  0.90        3    0.00   33.3%  -0.467
+  0.92        9    0.00   55.6%  -0.111
+  0.95        1    0.00  100.0%   0.600
+  0.96        3    0.00   33.3%  -0.467
+  0.99       24    0.00   41.7%  -0.333
+  1.02        5    0.00   20.0%  -0.680
+  1.09        5    0.00   40.0%  -0.360
+  1.10       11    0.00   27.3%  -0.564
+  1.14        1    0.00    0.0%  -1.000
+
+9n. FAMILY-AWARE R:R PERFORMANCE
+----------------------------------------
+  Family              SLx    TPx    N    WR%    AvgR
+  ---------------- ------ ------ ---- ------ -------
+  failed_bounce      0.80   2.71   53  39.6%  -0.366
+  breakdown          1.00   3.88   13  30.8%  -0.508
+  none               1.00   3.00    2  50.0%  -0.200
+  trend              1.00   4.50    2  50.0%  -0.200
+
+10. EMITTED SIGNALS — FAMILY P&L
+----------------------------------------
+  Family             Cnt  Wins  Loss    AvgR
+  ---------------- ----- ----- ----- -------
+  none               252    94   158  -0.403
+  failed_bounce       53    21    32  -0.366
+  trend               42    19    23  -0.276
+  momentum            17     7    10  -0.341
+  breakdown           15     4    11  -0.573
+  mean_reversion       8     4     4  -0.200
+  volatility           3     0     3  -1.000
+
+11. CALIBRATION VIEW (win rate & expectancy by context)
+----------------------------------------
+  Policy                 Regime             Side     N    WR%    AvgR     Exp
+  ---------------------- ------------------ ----- ---- ------ ------- -------
+  legacy                 UPTREND            LONG    23  43.5%  -0.304  -0.304
+  legacy                 RANGING            LONG    17  17.6%  -0.718  -0.718
+  legacy                 RANGING            SHORT   10  30.0%  -0.520  -0.520
+  legacy                 STRONG_UPTREND     LONG    10  40.0%  -0.360  -0.360
+  phase2_v1              STRONG_UPTREND     LONG    10  20.0%  -0.680  -0.680
+  phase2_v1              STRONG_UPTREND     LONG     8  37.5%  -0.400  -0.400
+  phase2_v1              STRONG_UPTREND     LONG     6  66.7%   0.067   0.067
+  phase2_data_burst_v1_familyfix UPTREND            LONG     6  66.7%   0.067   0.067
+  phase2_v1              UPTREND            SHORT    6  16.7%  -0.733  -0.733
+  phase2_v1              STRONG_UPTREND     LONG     5  20.0%  -0.680  -0.680
+  phase2_v1              UPTREND            SHORT    5  80.0%   0.280   0.280
+  phase2_data_burst_v1   STRONG_UPTREND     LONG     5  80.0%   0.280   0.280
+  phase2_v1              STRONG_UPTREND     LONG     5  40.0%  -0.360  -0.360
+  phase2_v1              UPTREND            SHORT    5  20.0%  -0.680  -0.680
+  phase2_data_burst_v1_familyfix UPTREND            LONG     4  75.0%   0.200   0.200
+  phase2_data_burst_v1_familyfix STRONG_UPTREND     LONG     4  50.0%  -0.200  -0.200
+  phase2_v1              STRONG_UPTREND     LONG     4  25.0%  -0.600  -0.600
+  phase2_v1              STRONG_UPTREND     LONG     4  50.0%  -0.200  -0.200
+  phase2_v1              UPTREND            LONG     4  50.0%  -0.200  -0.200
+  phase2_data_burst_v1_familyfix UPTREND            LONG     4  25.0%  -0.600  -0.600
+
+12. COLLECTOR DATA (funding / OI / LS ratios)
+----------------------------------------
+  Funding collector: table not found / no access
+  OI collector      : table not found / no access
+  LS ratio collector: table not found / no access
+
+=================================================================
+  SUMMARY
+----------------------------------------
+  Training rows collected  : 201,733
+  200-row milestone        : ✅ REACHED
+  Signals emitted          : 390
+  Win rate (resolved)      : 38.2%
+  Avg R (resolved)         : -1.000
+  Collectors               : funding / OI / LS active
+=================================================================

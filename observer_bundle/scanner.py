@@ -91,6 +91,7 @@ UNIVERSE_REFRESH_INTERVAL = 900  # 15 minutes
 
 MIN_SIGNAL_SCORE = config.MIN_SIGNAL_SCORE
 COOLDOWN_BARS = 32
+from idim_gate_patch import apply_gates
 BLOCK_STRONG_UPTREND = getattr(config, "BLOCK_STRONG_UPTREND", True)
 ATR_SL_MULTIPLIER = 1.0
 ATR_TP_MULTIPLIER = 3.0
@@ -130,12 +131,18 @@ ENABLE_MEAN_REVERSION = bool(getattr(config, "ENABLE_MEAN_REVERSION", False))
 ENABLE_MOMENTUM = bool(getattr(config, "ENABLE_MOMENTUM", True))
 
 # ─── Side-Balance Coherence Doctrine (v2.0) ──────────────────────────────────
-# 1c. Side-Balance Coherence (v2.0 Doctrine)
-COHERENCE_WINDOW = 200
-COHERENCE_STABILIZING_BAND = (0.40, 0.60)
-SIDE_BALANCE_LAMBDA = 25.0  # Dynamic offset sensitivity
-MAX_COHERENCE_OFFSET = 15.0 # Max penalty/boost cap to prevent over-optimization
-COHERENCE_RESCUE_FLOOR = 40.0 # Min raw score required to receive a coherence boost
+COHERENCE_WINDOW = config.COHERENCE_WINDOW
+SIDE_BALANCE_LAMBDA = config.SIDE_BALANCE_LAMBDA
+MAX_COHERENCE_OFFSET = config.MAX_COHERENCE_OFFSET
+COHERENCE_RESCUE_FLOOR = config.COHERENCE_RESCUE_FLOOR
+SIDE_SEPARATION_MARGIN = config.SIDE_SEPARATION_MARGIN
+
+# Profile-specific flags
+COHERENCE_ENABLED = getattr(config, "COHERENCE_ENABLED", False)
+SOFT_REGIME_GATE = getattr(config, "SOFT_REGIME_GATE", False)
+SOFT_BTC_GATE = getattr(config, "SOFT_BTC_GATE", False)
+REGIME_SOFT_PENALTY = getattr(config, "REGIME_SOFT_PENALTY", 12.0)
+BTC_SOFT_PENALTY = getattr(config, "BTC_SOFT_PENALTY", 15.0)
 
 class SideBalanceController:
     def __init__(self, window_n: int = 200):
@@ -212,6 +219,14 @@ _family_telemetry = {
         "regime_block": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
     },
     "passed": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
+    "short_attrition": {
+        "short_emitted": 0,
+        "short_near_miss_lt5": 0,
+        "short_near_miss_lt10": 0,
+        "short_killed_by_gate": 0,
+        "short_floor_denied": 0,
+        "short_template_zero": 0,
+    }
 }
 _telemetry_lock = threading.Lock()
 
@@ -221,18 +236,26 @@ def _reset_family_telemetry():
     global _family_telemetry
     with _telemetry_lock:
         _family_telemetry = {
-            "assigned": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
+            "assigned": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
             "rejected_by_gate": {
-                "min_score": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
-                "squeeze": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
-                "vwap": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
-                "volume": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
-                "exhaustion": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
-                "1h_trend": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
-                "btc_block": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
-                "regime_block": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
+                "min_score": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
+                "squeeze": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
+                "vwap": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
+                "volume": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
+                "exhaustion": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
+                "1h_trend": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
+                "btc_block": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
+                "regime_block": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
             },
-            "passed": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "none": 0},
+            "passed": {"trend": 0, "volatility": 0, "mean_reversion": 0, "momentum": 0, "failed_bounce": 0, "breakdown": 0, "none": 0},
+            "short_attrition": {
+                "short_emitted": 0,
+                "short_near_miss_lt5": 0,
+                "short_near_miss_lt10": 0,
+                "short_killed_by_gate": 0,
+                "short_floor_denied": 0,
+                "short_template_zero": 0,
+            }
         }
 
 
@@ -246,6 +269,18 @@ def _log_family_telemetry():
         # Build telemetry summary
         lines = ["[FAMILY TELEMETRY] ============================================"]
         lines.append(f"Total symbols classified: {total_assigned}")
+        
+        # SPRINT B: Output Short Attrition
+        attr = _family_telemetry.get("short_attrition", {})
+        attr_log = (
+            f"  SHORT_ATTR: Emitted={attr.get('short_emitted', 0)} | "
+            f"Miss<5={attr.get('short_near_miss_lt5', 0)} | "
+            f"Miss<10={attr.get('short_near_miss_lt10', 0)} | "
+            f"GateKilled={attr.get('short_killed_by_gate', 0)} | "
+            f"FloorDenied={attr.get('short_floor_denied', 0)} | "
+            f"TemplateZero={attr.get('short_template_zero', 0)}"
+        )
+        lines.append(attr_log)
         
         for family in ["trend", "volatility", "mean_reversion", "momentum", "none"]:
             assigned = _family_telemetry["assigned"][family]
@@ -564,6 +599,12 @@ def log_training_candidate(
     feature_version: str = "v1.0",
     family_indicators: Optional[Dict] = None,
     trace: Optional[Dict] = None,
+    # NEW directional fields
+    directional_long_score: Optional[float] = None,
+    directional_short_score: Optional[float] = None,
+    directional_net: Optional[float] = None,
+    directional_margin: Optional[float] = None,
+    directional_primary_side: Optional[str] = None,
 ) -> Optional[int]:
     """
     Record a training candidate with market state snapshot and return its row id.
@@ -608,13 +649,16 @@ def log_training_candidate(
                     rejection_gate, would_have_passed_live,
                     regime, btc_regime, close_price, adx14, rsi14, atr_stretch,
                     squeeze_on, squeeze_fired, vol_ratio, funding_rate, ls_ratio, score,
-                    family_indicators, trace_data
+                    family_indicators, trace_data,
+                    directional_long_score, directional_short_score, directional_net,
+                    directional_margin, directional_primary_side
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s::jsonb,
                     %s, %s,
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
-                    %s::jsonb, %s::jsonb
+                    %s::jsonb, %s::jsonb,
+                    %s, %s, %s, %s, %s
                 )
                 RETURNING id
                 """,
@@ -625,12 +669,16 @@ def log_training_candidate(
                     regime, btc_regime, close_price, adx14, rsi14, atr_stretch,
                     squeeze_on, squeeze_fired, vol_ratio, funding_rate, ls_ratio, score,
                     json.dumps(family_indicators or {}, cls=_NumpyEncoder),
-                    json.dumps(trace or {}, cls=_NumpyEncoder)
+                    json.dumps(trace or {}, cls=_NumpyEncoder),
+                    directional_long_score,
+                    directional_short_score,
+                    directional_net,
+                    directional_margin,
+                    directional_primary_side,
                 ),
             )
             row = cur.fetchone()
             return int(row[0]) if row else None
-            # Note: conn.commit() is called by the caller (scan_once)
     except Exception as e:
         logger.warning(f"[TRAINING_LOG_ERROR] {symbol}: {e}")
         return None
@@ -1019,6 +1067,11 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out["squeeze_on"] = (out["bb_upper"] < out["kc_upper"]) & (out["bb_lower"] > out["kc_lower"])
     out["squeeze_fired"] = out["squeeze_on"].shift(1).fillna(False) & ~out["squeeze_on"]
     out["recent_squeeze_fire"] = out["squeeze_fired"].rolling(window=3).max().fillna(0).astype(bool)
+    # Directional squeeze fire flags (Sprint C)
+    out["fire_bullish"] = out["squeeze_fired"] & (out["close"] > out["open"])
+    out["fire_bearish"] = out["squeeze_fired"] & (out["close"] < out["open"])
+    out["recent_squeeze_fire_long"]  = out["fire_bullish"].rolling(window=3).max().fillna(0).astype(bool)
+    out["recent_squeeze_fire_short"] = out["fire_bearish"].rolling(window=3).max().fillna(0).astype(bool)
 
     # ── Institutional Daily VWAP (resets at UTC midnight) ─────────────────
     _date = out["open_time"].dt.date
@@ -1029,9 +1082,14 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         / out["volume"].groupby(_date).cumsum().replace(0, np.nan)
     ).fillna(out["close"])
 
-    # CVD Lite (Cumulative Volume Delta)
+    # CVD Lite (Rolling Session Pressure — Sprint C)
+    # Replace cumulative CVD with short-window flow pressure.
+    # cumsum() carries stale history; 4-bar rolling measures *current* buyer/seller aggression.
     out["taker_sell"] = out["volume"] - out["taker_buy_base_asset_volume"]
-    out["cvd_lite"] = (out["taker_buy_base_asset_volume"] - out["taker_sell"]).cumsum()
+    out["cvd_delta"] = out["taker_buy_base_asset_volume"] - out["taker_sell"]
+    out["cvd_4"]  = out["cvd_delta"].rolling(4).sum().fillna(0.0)
+    out["cvd_8"]  = out["cvd_delta"].rolling(8).sum().fillna(0.0)
+    out["cvd_lite"] = out["cvd_4"]   # canonical short-term pressure feature
 
     return out
 
@@ -1105,6 +1163,244 @@ def _vol_ratio(latest: pd.Series) -> float:
     if vsma is None or (isinstance(vsma, float) and math.isnan(vsma)) or vsma == 0:
         return 0.0
     return float(latest["volume"]) / float(vsma)
+
+# ─── Sprint C: Probability Scoring Helpers ─────────────────────────────────────
+def _sigmoid(x: float) -> float:
+    """Bounded logistic function. Output in (0, 1)."""
+    return 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, x))))
+
+def _clip01(x: float) -> float:
+    return max(0.0, min(1.0, x))
+
+def _norm(value: float, lo: float, hi: float) -> float:
+    """Linear normalization to [0, 1]. Returns 0.5 when range is degenerate."""
+    if hi <= lo:
+        return 0.5
+    return _clip01((value - lo) / (hi - lo))
+
+def score_long_probability(latest: pd.Series, regime: str, alpha: dict) -> Tuple[float, Dict]:
+    """
+    Sprint C: Calibrated logistic long score.
+    Returns score in [0, 100] where 50 = breakeven (p=0.5 at sigmoid(0)).
+    Coefficients are initial priors — will be refined from training_candidates outcomes.
+    """
+    ema_trend     = 1.0 if float(latest.get("ema20", 0)) > float(latest.get("ema50", 0)) else 0.0
+    price_above   = 1.0 if float(latest.get("close", 0)) > float(latest.get("ema20", 0)) else 0.0
+    rsi_bull      = _norm(float(latest.get("rsi14", 50)), 45.0, 65.0)
+    macd_v        = float(latest.get("macd_hist", 0))
+    macd_bull     = _norm(macd_v, 0.0, max(1e-6, abs(macd_v) + 1e-6))
+    vol_confirm   = _norm(_vol_ratio(latest), 1.0, 2.0)
+    cvd_v         = float(latest.get("cvd_lite", 0))   # now rolling 4-bar
+    cvd_bull      = _norm(cvd_v, 0.0, max(1.0, abs(cvd_v) + 1.0))
+    squeeze_long  = 1.0 if bool(latest.get("recent_squeeze_fire_long", False)) else 0.0
+
+    funding  = float(alpha.get("funding_rate", 0.0) or 0.0)
+    ls_ratio = float(alpha.get("ls_ratio", 1.0) or 1.0)
+
+    regime_score = {"STRONG_UPTREND": 1.0, "UPTREND": 0.8, "RANGING": 0.4,
+                    "DOWNTREND": 0.2, "STRONG_DOWNTREND": 0.0}.get(regime, 0.4)
+
+    # --- Sprint D: Regime Prior (Sovereign Nudge) ---
+    regime_prior = 0.0
+    if regime == "UPTREND":
+        regime_prior = float(getattr(config, "LONG_UPTREND_Z_PRIOR", 0.35))
+    elif regime == "STRONG_UPTREND":
+        regime_prior = float(getattr(config, "LONG_STRONG_UPTREND_Z_PRIOR", 0.50))
+
+    z_pre_prior = (
+        -2.20
+        + 1.20 * ema_trend
+        + 0.80 * price_above
+        + 0.70 * rsi_bull
+        + 0.60 * macd_bull
+        + 0.50 * vol_confirm
+        + 0.45 * cvd_bull
+        + 0.35 * squeeze_long
+        + 0.40 * regime_score
+        - 0.30 * _clip01((ls_ratio - 1.0) / 2.0)
+        + 0.20 * _clip01((-funding) / 0.01)
+    )
+    
+    z = z_pre_prior + regime_prior
+    pwin  = _sigmoid(z)
+    score = 100.0 * pwin
+
+    return score, {
+        "family_tag": "prob_long", 
+        "pwin": round(pwin, 4), 
+        "z": round(z, 4),
+        "z_pre_prior": round(z_pre_prior, 4),
+        "regime_prior": round(regime_prior, 4),
+        "volume_ratio": _vol_ratio(latest)
+    }
+
+def score_short_probability(latest: pd.Series, regime: str, alpha: dict) -> Tuple[float, Dict]:
+    """
+    Sprint C: Calibrated logistic short score.
+    Symmetric counterpart to score_long_probability.
+    """
+    ema_bear      = 1.0 if float(latest.get("ema20", 0)) < float(latest.get("ema50", 0)) else 0.0
+    price_below   = 1.0 if float(latest.get("close", 0)) < float(latest.get("ema20", 0)) else 0.0
+    rsi_v         = float(latest.get("rsi14", 50))
+    rsi_bear      = 1.0 - _norm(rsi_v, 35.0, 55.0)   # high RSI = bad for short
+    macd_v        = float(latest.get("macd_hist", 0))
+    macd_bear     = _norm(-macd_v, 0.0, max(1e-6, abs(macd_v) + 1e-6))
+    vol_confirm   = _norm(_vol_ratio(latest), 1.0, 2.0)
+    cvd_v         = float(latest.get("cvd_lite", 0))
+    cvd_bear      = _norm(-cvd_v, 0.0, max(1.0, abs(cvd_v) + 1.0))
+    squeeze_short = 1.0 if bool(latest.get("recent_squeeze_fire_short", False)) else 0.0
+
+    funding  = float(alpha.get("funding_rate", 0.0) or 0.0)
+    ls_ratio = float(alpha.get("ls_ratio", 1.0) or 1.0)
+
+    regime_score = {"STRONG_DOWNTREND": 1.0, "DOWNTREND": 0.8, "RANGING": 0.4,
+                    "UPTREND": 0.2, "STRONG_UPTREND": 0.0}.get(regime, 0.4)
+
+    # --- Sprint D: Regime Prior (Sovereign Nudge) ---
+    regime_prior = 0.0
+    if regime == "DOWNTREND":
+        regime_prior = float(getattr(config, "SHORT_DOWNTREND_Z_PRIOR", 0.35))
+    elif regime == "STRONG_DOWNTREND":
+        regime_prior = float(getattr(config, "SHORT_STRONG_DOWNTREND_Z_PRIOR", 0.50))
+
+    z_pre_prior = (
+        -2.25
+        + 1.20 * ema_bear
+        + 0.80 * price_below
+        + 0.70 * rsi_bear
+        + 0.60 * macd_bear
+        + 0.50 * vol_confirm
+        + 0.45 * cvd_bear
+        + 0.35 * squeeze_short
+        + 0.40 * regime_score
+        + 0.35 * _clip01((ls_ratio - 1.0) / 2.0)
+        + 0.20 * _clip01(funding / 0.01)
+    )
+
+    z = z_pre_prior + regime_prior
+    pwin  = _sigmoid(z)
+    score = 100.0 * pwin
+
+    return score, {
+        "family_tag": "prob_short", 
+        "pwin": round(pwin, 4), 
+        "z": round(z, 4),
+        "z_pre_prior": round(z_pre_prior, 4),
+        "regime_prior": round(regime_prior, 4),
+        "volume_ratio": _vol_ratio(latest)
+    }
+
+# ─── Sprint C: Regime-Aware R:R ────────────────────────────────────────────────
+def get_rr_multipliers(signal_family: str, regime: str, side: str) -> Tuple[float, float]:
+    """
+    Returns (sl_atr_mult, tp_atr_mult) based on signal family and regime context.
+    - Counter-trend setups get tighter stops and nearer targets (lower R expectation)
+    - With-trend setups get full extension
+    - Ranging environments get conservative shaping
+    """
+    fam = (signal_family or "").lower()
+    # Default: 1.0 SL, 4.0 TP
+    sl_mult = 1.0
+    tp_mult = 4.0
+
+    # Counter‑trend (failed bounce) – tighter SL, still 3.5 TP
+    if side == "SHORT" and fam == "failed_bounce":
+        sl_mult = 0.8
+        tp_mult = 3.5
+    # Breakdown short (with‑trend)
+    elif side == "SHORT" and fam == "breakdown":
+        sl_mult = 1.0
+        tp_mult = 4.5
+    # Long trend
+    elif side == "LONG" and fam == "trend":
+        sl_mult = 1.0
+        tp_mult = 4.5
+    # Mean reversion (tighter)
+    elif fam == "mean_reversion":
+        sl_mult = 0.8
+        tp_mult = 3.0
+
+    return sl_mult, tp_mult
+
+# ─── Sprint C: Score-Scaled Position Sizing ────────────────────────────────────
+def risk_scale_from_score(score: float, min_scale: float = 0.50, max_scale: float = 1.50) -> float:
+    """
+    Monotone bounded scaling factor derived from signal score.
+    score=50 → 1.0x base risk (breakeven conviction)
+    score=100 → 1.5x (high conviction)
+    score=0   → 0.5x (low conviction, still trades)
+    Mathematically: raw = 1 + 0.5 * ((score-50)/50), clamped to [min, max].
+    """
+    raw = 1.0 + 0.5 * ((score - 50.0) / 50.0)
+    return max(min_scale, min(max_scale, raw))
+
+# ─── Sprint D: Probability Cutover Helpers ─────────────────────────────────────
+def blend_primary_score(prob_score: float, legacy_score: float) -> float:
+    """
+    Transition blend: probability model is primary, legacy heuristic is shadow.
+    w_prob * prob + w_legacy * legacy, both weights from config.
+    Monotone in prob_score by construction (w_prob >= 0).
+    """
+    w_prob   = float(getattr(config, "PROBABILITY_PRIMARY_WEIGHT", 0.75))
+    w_legacy = float(getattr(config, "LEGACY_SHADOW_WEIGHT", 0.25))
+    return w_prob * float(prob_score) + w_legacy * float(legacy_score)
+
+def min_probability_floor(side: str, family_tag: str, regime: str, hour_utc: int) -> float:
+    """
+    Per-side, per-family minimum probability floor (0-100 scale).
+    Implements Controlled Tightening (The Sovereign Purge Hypothesis).
+    """
+    side = side.upper()
+    fam  = (family_tag or "none").lower()
+
+    # Ranging + breakdown short = always block (return >100)
+    if regime == "RANGING" and side == "SHORT" and fam == "breakdown":
+        return 101.0
+
+    # 1. Hard-block RANGING except for mean_reversion
+    if regime == "RANGING" and fam != "mean_reversion":
+        return 101.0  # Impossible to pass
+
+    # 2. Base side floors
+    if side == "LONG":
+        floor = float(getattr(config, "MIN_LONG_PROB_SCORE", 52.0))
+    else:
+        # Standard short floor
+        floor = float(getattr(config, "MIN_SHORT_PROB_SCORE", 52.0))
+        # Specialized short floors
+        if fam == "failed_bounce":
+            floor = float(getattr(config, "MIN_FAILED_BOUNCE_SHORT_PROB_SCORE", 55.0))
+
+    # 3. Controlled Tightening Uplifts
+    # 3a. Unclassified signals floor
+    if fam == "none":
+        floor = max(floor, float(getattr(config, "MIN_UNCLASSIFIED_PROB_SCORE", 55.0)))
+
+    # 3b. Breakdown quarantine (+8.0 uplift)
+    if fam == "breakdown":
+        floor += float(getattr(config, "BREAKDOWN_THRESHOLD_UPLIFT", 8.0))
+
+    # 3c. Degraded hour penalty (+5.0 uplift for UTC 6/7)
+    degraded_hours = getattr(config, "DEGRADED_HOURS_UTC", {6, 7})
+    if hour_utc in degraded_hours:
+        floor += float(getattr(config, "DEGRADED_HOUR_THRESHOLD_UPLIFT", 5.0))
+
+    return floor
+
+def probability_gate(side: str, family_tag: str, prob_score: float, regime: str, hour_utc: int) -> Tuple[bool, str]:
+    """
+    Gate on raw probability score BEFORE blend.
+    Checks intrinsic edge quality before context penalties are applied.
+    Returns (passed, gate_name_if_failed).
+    """
+    fam = (family_tag or "none").lower()
+    floor = min_probability_floor(side, family_tag, regime, hour_utc)
+    if prob_score < floor:
+        reason = f"prob_floor_{side.lower()}_{fam}_{floor:.1f}"
+        if floor > 100:
+            reason = f"toxic_regime_block_{regime}_{fam}"
+        return False, reason
+    return True, "prob_ok"
 
 def score_long_signal(latest: pd.Series, regime: str, alpha: dict) -> Tuple[float, Dict]:
     reasons_pass, reasons_fail, tags = [], [], []
@@ -1184,84 +1480,383 @@ def score_long_signal(latest: pd.Series, regime: str, alpha: dict) -> Tuple[floa
 
     return score, {"reasons_pass": reasons_pass, "reasons_fail": reasons_fail, "volume_ratio": vol_ratio, "tags": tags}
 
-def score_short_signal(latest: pd.Series, regime: str, alpha: dict) -> Tuple[float, Dict]:
-    reasons_pass, reasons_fail, tags = [], [], []
-    score = 0.0
+# ─── SPRINT B: SHORT-SIDE ARSENAL ──────────────────────────────────────
 
-    # ADX classification (not hard gate) - used for signal family
-    adx = latest.get("adx14", 0)
-    if adx < 20:
-        reasons_fail.append(f"ADX {adx:.1f} below 20 (chop zone)")
-    elif adx >= 25:
-        score += 10
-        reasons_pass.append(f"ADX {adx:.1f} strong trend")
+def apply_short_context_penalties(
+    raw_score: float,
+    family_tag: str,
+    regime: str,
+    btc_regime: str,
+) -> Tuple[float, Dict[str, Any]]:
+    if raw_score <= 0:
+        return 0.0, {"penalties": [], "blocked": False}
+
+    penalties = []
+    blocked = False
+
+    # Regime logic
+    if regime in ("UPTREND", "STRONG_UPTREND"):
+        if family_tag == "failed_bounce":
+            penalties.append(("uptrend_failed_bounce_penalty", config.FAILED_BOUNCE_UPTREND_PENALTY))
+        elif config.GENERIC_SHORT_UPTREND_BLOCK:
+            blocked = True
+
+    # BTC logic
+    if not blocked and btc_regime in ("UPTREND", "STRONG_UPTREND"):
+        if family_tag == "failed_bounce":
+            penalties.append(("btc_uptrend_failed_bounce_penalty", config.FAILED_BOUNCE_BTC_UPTREND_PENALTY))
+        else:
+            penalties.append(("btc_uptrend_short_penalty", config.GENERIC_SHORT_BTC_UPTREND_PENALTY))
+
+    if blocked:
+        return 0.0, {
+            "penalties": penalties,
+            "blocked": True,
+            "rejection_gate": "regime_block_non_failed_bounce_short",
+        }
+
+    penalty_total = sum(p for _, p in penalties)
+    final_score = max(0.0, raw_score - penalty_total)
+
+    return final_score, {
+        "penalties": penalties,
+        "blocked": False,
+        "penalty_total": float(penalty_total),
+        "final_score": float(final_score),
+    }
+
+def score_failed_bounce_short(
+    latest: pd.Series,
+    prev_bar: pd.Series,
+    regime: str,
+    alpha: dict,
+) -> Tuple[float, Dict]:
+    reasons_pass, reasons_fail = [], []
+    score = 0.0
+    family_tag = "failed_bounce"
+
+    atr14 = float(latest.get("atr14", 0.0) or 0.0)
+    if atr14 <= 0:
+        return 0.0, {
+            "family_tag": family_tag,
+            "reasons_fail": ["ATR unavailable"],
+            "volume_ratio": 0.0,
+        }
+
+    # Structure: previous bar high > its EMA20, current close < its EMA20
+    prev_high = float(prev_bar.get("high", 0.0))
+    prev_ema20 = float(prev_bar.get("ema20", 0.0))
+    latest_close = float(latest.get("close", 0.0))
+    latest_ema20 = float(latest.get("ema20", 0.0))
+
+    if not (prev_high > prev_ema20 and latest_close < latest_ema20):
+        return 0.0, {
+            "family_tag": family_tag,
+            "reasons_fail": ["No failed-bounce structure"],
+            "volume_ratio": 0.0,
+        }
+
+    reclaim_depth_atr = (prev_high - prev_ema20) / atr14
+    if reclaim_depth_atr <= config.SHORT_FAILED_BOUNCE_RECLAIM_ATR_MAX:
+        score += 20
+        reasons_pass.append(f"Failed reclaim depth {reclaim_depth_atr:.2f} ATR")
     else:
-        reasons_pass.append(f"ADX {adx:.1f} moderate")
-        
-    # THE EXHAUSTION BLOCKER - kept as hard gate
+        reasons_fail.append(f"Reclaim too extended {reclaim_depth_atr:.2f} ATR")
+
+    # RSI rollover
+    rsi_now = float(latest.get("rsi14", 50.0))
+    rsi_prev = float(prev_bar.get("rsi14", 50.0))
+    if 40.0 <= rsi_now <= 55.0 and rsi_now < rsi_prev:
+        score += 15
+        reasons_pass.append(f"RSI rollover {rsi_prev:.1f}->{rsi_now:.1f}")
+    else:
+        reasons_fail.append(f"RSI not rolling over ({rsi_prev:.1f}->{rsi_now:.1f})")
+
+    # MACD rollover / bearish impulse
+    macd_now = float(latest.get("macd_hist", 0.0))
+    macd_prev = float(prev_bar.get("macd_hist", 0.0))
+    if macd_now < macd_prev and macd_now <= 0:
+        score += 15
+        reasons_pass.append("MACD histogram rolled bearish")
+    else:
+        reasons_fail.append("MACD not bearish enough")
+
+    # CVD deterioration
+    cvd_now = float(latest.get("cvd_lite", 0.0))
+    cvd_prev = float(prev_bar.get("cvd_lite", 0.0))
+    if cvd_now < cvd_prev:
+        score += 15
+        reasons_pass.append("Negative CVD delta")
+    else:
+        reasons_fail.append("CVD not deteriorating")
+
+    # Volume confirmation
+    vol_ratio = _vol_ratio(latest)
+    if vol_ratio >= 1.05:
+        score += 10
+        reasons_pass.append(f"Volume ratio {vol_ratio:.2f}")
+    else:
+        reasons_fail.append(f"Weak volume ratio {vol_ratio:.2f}")
+
+    # Regime context: failed bounce is allowed in uptrends, rewarded lightly
+    if regime in ("UPTREND", "STRONG_UPTREND"):
+        score += 10
+        reasons_pass.append(f"Counter-trend failed bounce in {regime}")
+    elif regime == "RANGING":
+        score += 5
+        reasons_pass.append("Failed bounce in ranging regime")
+    else:
+        reasons_pass.append(f"Regime {regime}")
+
+    # Derivatives context
+    funding = float(alpha.get("funding_rate", 0.0) or 0.0)
+    ls_ratio = float(alpha.get("ls_ratio", 1.0) or 1.0)
+    if funding > 0 and ls_ratio > 1.2:
+        score += 10
+        reasons_pass.append(f"Crowded longs: funding={funding:.5f}, ls={ls_ratio:.2f}")
+
+    return score, {
+        "family_tag": family_tag,
+        "reasons_pass": reasons_pass,
+        "reasons_fail": reasons_fail,
+        "volume_ratio": float(vol_ratio),
+        "reclaim_depth_atr": float(reclaim_depth_atr),
+    }
+
+def score_breakdown_short(
+    latest: pd.Series,
+    regime: str,
+    alpha: dict,
+) -> Tuple[float, Dict]:
+    reasons_pass, reasons_fail = [], []
+    score = 0.0
+    family_tag = "breakdown"
+
+    atr14 = float(latest.get("atr14", 0.0) or 0.0)
+    close = float(latest.get("close", 0.0))
+    ema20 = float(latest.get("ema20", 0.0))
+    ema50 = float(latest.get("ema50", 0.0))
+    adx14 = float(latest.get("adx14", 0.0))
+    macd = float(latest.get("macd_hist", 0.0))
+    vol_ratio = _vol_ratio(latest)
+
+    if atr14 <= 0 or close <= 0:
+        return 0.0, {
+            "family_tag": family_tag,
+            "reasons_fail": ["ATR/close unavailable"],
+            "volume_ratio": 0.0,
+        }
+
+    stretch_atr = (ema20 - close) / atr14 if close < ema20 else 0.0
+    if stretch_atr > config.SHORT_BREAKDOWN_STRETCH_MAX:
+        return 0.0, {
+            "family_tag": family_tag,
+            "reasons_fail": [f"Breakdown overextended {stretch_atr:.2f} ATR"],
+            "volume_ratio": float(vol_ratio),
+        }
+
+    if ema20 < ema50:
+        score += 20
+        reasons_pass.append("EMA20 < EMA50")
+    else:
+        reasons_fail.append("EMA20 not below EMA50")
+
+    if close < ema20:
+        score += 15
+        reasons_pass.append("Price below EMA20")
+    else:
+        reasons_fail.append("Price not below EMA20")
+
+    if adx14 > 25:
+        score += 15
+        reasons_pass.append(f"ADX strong {adx14:.1f}")
+    else:
+        reasons_fail.append(f"ADX weak {adx14:.1f}")
+
+    if macd < 0:
+        score += 15
+        reasons_pass.append("MACD histogram negative")
+    else:
+        reasons_fail.append("MACD not negative")
+
+    if vol_ratio >= 1.20:
+        score += 15
+        reasons_pass.append(f"Volume ratio {vol_ratio:.2f}")
+    else:
+        reasons_fail.append(f"Volume weak {vol_ratio:.2f}")
+
+    if regime in ("DOWNTREND", "STRONG_DOWNTREND"):
+        score += 10
+        reasons_pass.append(f"Regime support: {regime}")
+
+    funding = float(alpha.get("funding_rate", 0.0) or 0.0)
+    ls_ratio = float(alpha.get("ls_ratio", 1.0) or 1.0)
+    if funding > 0 and ls_ratio > 1.1:
+        score += 10
+        reasons_pass.append(f"Long crowding: funding={funding:.5f}, ls={ls_ratio:.2f}")
+
+    return score, {
+        "family_tag": family_tag,
+        "reasons_pass": reasons_pass,
+        "reasons_fail": reasons_fail,
+        "volume_ratio": float(vol_ratio),
+        "stretch_atr": float(stretch_atr),
+    }
+
+def score_mean_reversion_short(latest: pd.Series, regime: str, alpha: dict) -> Tuple[float, Dict]:
+    """Broader template targeting overextended structures snapping back."""
+    reasons_pass, reasons_fail = [], []
+    score = 0.0
+    family_tag = "mean_reversion"
+
+    # THE EXHAUSTION BLOCKER (Do not short if we've already dumped)
     atr14 = latest["atr14"]
     dist_from_ema = latest["ema20"] - latest["close"]
-    if atr14 > 0:
+    if atr14 > 0 and latest.get("ema20") and latest.get("close"):
         stretch_atr = dist_from_ema / atr14
         if stretch_atr > config.ATR_STRETCH_MAX:
-            return 0.0, {
-                "reasons_fail": [f"Exhausted: Price {stretch_atr:.1f} ATRs below EMA20 (max {config.ATR_STRETCH_MAX})"],
-                "volume_ratio": float(_vol_ratio(latest) or 0.0),
-            }
+             return 0.0, {
+                 "reasons_fail": [f"MR_Exhausted: Price {stretch_atr:.1f} ATRs below EMA"],
+                 "volume_ratio": float(_vol_ratio(latest) or 0.0), "family_tag": family_tag
+             }
 
-    # EMA alignment
-    if latest["ema20"] < latest["ema50"]:
-        score += 20
-        reasons_pass.append("EMA20 < EMA50 (trend aligned)")
-    else:
-        reasons_fail.append("EMA20 >= EMA50")
-
-    # Price vs EMA20
-    if latest["close"] < latest["ema20"]:
-        score += 10; reasons_pass.append("Price below EMA20")
-    else:
-        reasons_fail.append("Price >= EMA20")
-
-    # RSI
+    # 1. Price is Overextended to the upside (VWAP deviation or EMA stretch)
+    if latest.get("vwap"):
+        vwap_delta = (latest["close"] - latest["vwap"]) / latest["vwap"]
+        # Allow either overextended above VWAP (short overbought) OR below VWAP with bearish structure
+        if vwap_delta > config.SHORT_MEAN_REVERSION_VWAP_EXT_PCT:
+            score += 15
+            reasons_pass.append(f"Extended above VWAP (+{vwap_delta*100:.1f}%)")
+        elif vwap_delta < -0.01 and latest["close"] < latest["ema20"]:
+            # Already below VWAP but still bearish – give partial credit
+            score += 8
+            reasons_pass.append(f"Below VWAP with bearish structure ({vwap_delta*100:.1f}%)")
+        else:
+            reasons_fail.append(f"VWAP delta {vwap_delta*100:.1f}% not extreme")
+    
+    # 2. RSI Overbought but Rolling
     rsi_v = latest["rsi14"]
-    if 35 <= rsi_v <= 70:
-        score += 15; reasons_pass.append(f"RSI {rsi_v:.1f} in bear zone")
+    if rsi_v > 65:
+        score += 15; reasons_pass.append(f"RSI {rsi_v:.1f} Overbought territory")
+    elif 55 <= rsi_v <= 65:
+        score += 5; reasons_pass.append(f"RSI {rsi_v:.1f} High but rolling")
     else:
-        reasons_fail.append(f"RSI {rsi_v:.1f} outside bear zone")
+         reasons_fail.append(f"RSI {rsi_v:.1f} Too low to revert")
 
-    # MACD
+    # 3. Momentum Loss
     if latest["macd_hist"] < 0:
-        score += 15; reasons_pass.append("MACD histogram negative")
+        score += 15; reasons_pass.append("MACD histogram turned negative")
     else:
-        reasons_fail.append("MACD histogram >= 0")
+        reasons_fail.append("MACD histogram still positive")
 
-    # Regime bonus
-    regime_bonus = {
-        "RANGING": 0, "DOWNTREND": 10, "STRONG_DOWNTREND": 15,
-        "UPTREND": 5, "STRONG_UPTREND": 0,
-    }.get(regime, 0)
-    score += regime_bonus
-    reasons_pass.append(f"Regime: {regime}")
+    # 4. Selling Volume Stepping In
+    if latest.get("cvd_lite", 0) < 0:
+        score += 10; reasons_pass.append("CVD Divergence (Sellers arriving)")
 
-    # Volume & CVD Alpha
+    return score, {"reasons_pass": reasons_pass, "reasons_fail": reasons_fail, "volume_ratio": float(_vol_ratio(latest) or 0.0), "family_tag": family_tag}
+
+def score_short_signal(
+    latest: pd.Series,
+    prev_bar: pd.Series,
+    regime: str,
+    alpha: dict,
+) -> Tuple[float, Dict]:
+    fb_score, fb_trace = score_failed_bounce_short(latest, prev_bar, regime, alpha)
+    bd_score, bd_trace = score_breakdown_short(latest, regime, alpha)
+    mr_score, mr_trace = score_mean_reversion_short(latest, regime, alpha)
+
+    candidates = [
+        (fb_score, fb_trace),
+        (bd_score, bd_trace),
+        (mr_score, mr_trace),
+    ]
+    best_score, best_trace = max(candidates, key=lambda x: x[0])
+
+    best_trace = dict(best_trace or {})
+    best_trace["template_scores"] = {
+        "failed_bounce": float(fb_score),
+        "breakdown": float(bd_score),
+        "mean_reversion": float(mr_score),
+    }
+    return best_score, best_trace
+
+# ========== DIRECTIONAL SHADOW MODEL (SYMMETRIC) ==========
+def compute_directional_score(
+    latest: pd.Series,
+    prev_bar: pd.Series,
+    regime: str,
+    alpha: dict,
+    df15: pd.DataFrame,
+) -> Dict[str, float]:
+    """
+    Symmetric directional scorer: long_score - short_score.
+    Uses mirrored conditions (not identical templates) to estimate net directional edge.
+    Returns dict with long_score, short_score, net, margin.
+    """
+    # ----- Long component (mirror of long conditions) -----
+    long_score = 0.0
+    # Trend alignment
+    if latest["ema20"] > latest["ema50"]:
+        long_score += 20
+    # Price vs EMA20
+    if latest["close"] > latest["ema20"]:
+        long_score += 10
+    # RSI bull zone
+    rsi = latest["rsi14"]
+    if 30 <= rsi <= 65:
+        long_score += 15
+    # MACD positive
+    if latest["macd_hist"] > 0:
+        long_score += 15
+    # Volume conviction
     vol_ratio = _vol_ratio(latest)
     if vol_ratio >= 1.1:
-        score += 15; reasons_pass.append(f"Volume ratio {vol_ratio:.2f} (confirmed)")
-    else:
-        reasons_fail.append(f"Volume ratio {vol_ratio:.2f} below 1.1")
-
-    if latest.get("cvd_lite", 0) < 0:
-        score += 15; reasons_pass.append("Aggressive Market Selling (Negative CVD)"); tags.append("CVD")
-
-    # DERIVATIVES ALPHA MERGE
+        long_score += 15
+    # CVD positive
+    if latest.get("cvd_lite", 0) > 0:
+        long_score += 15
+    # Derivatives: short squeeze (funding negative, LS low) – long tailwind
     funding = alpha.get("funding_rate", 0.0)
     ls_ratio = alpha.get("ls_ratio", 1.0)
-    if funding > 0.01 and ls_ratio > 2.5:
-        score += 30; reasons_pass.append(f"🩸 LONG SQUEEZE ALPHA: Funding {funding:.4f}, LS {ls_ratio:.2f}"); tags.append("Squeeze")
-    elif ls_ratio < 0.8:
-        score -= 20; reasons_fail.append(f"Crowded Shorts (LS {ls_ratio:.2f})")
+    if funding < -0.005 and ls_ratio < 0.9:
+        long_score += 30
 
-    return score, {"reasons_pass": reasons_pass, "reasons_fail": reasons_fail, "volume_ratio": vol_ratio, "tags": tags}
+    # ----- Short component (mirror conditions) -----
+    short_score = 0.0
+    # Trend alignment (bearish)
+    if latest["ema20"] < latest["ema50"]:
+        short_score += 20
+    # Price below EMA20
+    if latest["close"] < latest["ema20"]:
+        short_score += 10
+    # RSI bear zone (symmetric around 50)
+    if 35 <= rsi <= 65:
+        short_score += 15
+    # MACD negative
+    if latest["macd_hist"] < 0:
+        short_score += 15
+    # Volume conviction (same)
+    if vol_ratio >= 1.1:
+        short_score += 15
+    # CVD negative
+    if latest.get("cvd_lite", 0) < 0:
+        short_score += 15
+    # Derivatives: crowded longs (funding positive, LS high) – short tailwind
+    if funding > 0.005 and ls_ratio > 1.1:
+        short_score += 30
+
+    net = long_score - short_score
+    margin = abs(net)
+    primary_side = "LONG" if net > 0 else "SHORT" if net < 0 else "NEUTRAL"
+
+    return {
+        "directional_long_score": float(long_score),
+        "directional_short_score": float(short_score),
+        "directional_net": float(net),
+        "directional_margin": float(margin),
+        "directional_primary_side": primary_side,
+    }
+
 
 # ─── Signal construction ───────────────────────────────────────────────────────
 def build_signal(
@@ -1274,44 +1869,52 @@ def build_signal(
     atr_v = float(latest["atr14"])
     entry = float(latest["close"])
     score_bucket = (int(score) // 5) * 5
-    stop = entry - sl_mult * atr_v if side == "LONG" else entry + sl_mult * atr_v
-    
-    # Scale-Out Targets (v1.5 Strategy)
-    tp1 = entry + (1.2 * atr_v) if side == "LONG" else entry - (1.2 * atr_v)
-    tp2 = entry + (3.0 * atr_v) if side == "LONG" else entry - (3.0 * atr_v)
-    
-    # Refinement 2: Risk Parity Position Sizing
-    # Position Size = Risk Amount / |Entry - Stop|
-    # This ensures every trade risks exactly RISK_PER_TRADE_USD
+
+    # Sprint C: Regime-aware R:R (replaces fixed 1.0/3.0 constants)
+    rr_sl_mult, rr_tp_mult = get_rr_multipliers(signal_family, regime, side)
+    # Honour caller-provided sl_mult if it differs from default (Phase 2 wide-ATR cap),
+    # but apply the rr_sl_mult as a relative adjustment
+    effective_sl_mult = sl_mult * rr_sl_mult
+    stop = entry - effective_sl_mult * atr_v if side == "LONG" else entry + effective_sl_mult * atr_v
+
+    # Scale-Out Targets — family/regime shaped
+    tp1_mult = rr_tp_mult * 0.40   # scale-out at ~40% of full target
+    tp1 = entry + (tp1_mult * atr_v) if side == "LONG" else entry - (tp1_mult * atr_v)
+    tp2 = entry + (rr_tp_mult * atr_v) if side == "LONG" else entry - (rr_tp_mult * atr_v)
+
+    # Sprint C: Score-scaled position sizing
+    base_risk = float(config.RISK_PER_TRADE_USD)
+    risk_scale = risk_scale_from_score(score)
+    scaled_risk = base_risk * risk_scale
     stop_dist = abs(entry - stop)
-    pos_size = config.RISK_PER_TRADE_USD / stop_dist if stop_dist > 0 else 0
-    
-    # Family-specific stop adjustment
-    family_sl_mult = sl_mult
-    if signal_family == "mean_reversion":
-        family_sl_mult = sl_mult * 0.5  # Tighter stops for mean reversion
-    elif signal_family == "trend":
-        family_sl_mult = sl_mult * 1.0  # Normal stops for trend
-    elif signal_family == "volatility":
-        family_sl_mult = sl_mult * 1.2  # Wider stops for volatility breakouts
-    
+    pos_size = scaled_risk / stop_dist if stop_dist > 0 else 0
+
     trace.update({
-        "score_bucket": score_bucket, 
-        "cell_allowed": bool(True), 
+        "score_bucket": score_bucket,
+        "cell_allowed": bool(True),
         "allowed_cell_key": [regime, score_bucket],
         "tp1": round(tp1, 8),
         "tp2": round(tp2, 8),
-        "risk_usd": config.RISK_PER_TRADE_USD,
+        # Sprint C telemetry
+        "rr_sl_mult": round(effective_sl_mult, 3),
+        "rr_tp_mult": round(rr_tp_mult, 3),
+        "risk_scale": round(risk_scale, 3),
+        "risk_usd": round(scaled_risk, 4),
         "position_size": round(pos_size, 8),
+        "pwin": trace.get("pwin"),          # populated by prob models if used
+        "z_score": trace.get("z"),          # logistic z, if populated
+        "cvd_4": float(latest.get("cvd_4", latest.get("cvd_lite", 0))),
+        "cvd_8": float(latest.get("cvd_8", 0)),
+        "squeeze_fire_long": bool(latest.get("recent_squeeze_fire_long", False)),
+        "squeeze_fire_short": bool(latest.get("recent_squeeze_fire_short", False)),
         "tags": trace.get("tags", []),
         "signal_family": signal_family,
         "family_indicators": family_indicators or {},
-        "family_sl_mult": family_sl_mult,
         "squeeze_on": bool(latest.get("squeeze_on", False)),
         "squeeze_fired": bool(latest.get("squeeze_fired", False)),
         "recent_squeeze_fire": bool(trace.get("recent_squeeze_fire", False)),
     })
-    
+
     return {
         "signal_id": str(uuid.uuid4()),
         "pair": pair,
@@ -1321,14 +1924,24 @@ def build_signal(
         "stop_loss": stop,
         "tp1": round(tp1, 8),
         "tp2": round(tp2, 8),
-        "take_profit": round(tp2, 8), # Default to runner for legacy
+        "take_profit": round(tp2, 8),  # legacy field
         "score": score,
         "regime": regime,
         "reason_trace": trace,
         "logic_version": LOGIC_VERSION,
         "config_version": CONFIG_VERSION,
         "signal_family": signal_family,
+        # Sprint D Persistence Fields
+        "prob_score":   trace.get("prob_score"),
+        "legacy_score": trace.get("legacy_score"),
+        "pwin":         trace.get("pwin"),
+        "z_score":      trace.get("z"),  # Use 'z' as sent from analyze_pair
+        "score_mode":   trace.get("score_mode"),
+        "risk_scale":   trace.get("risk_scale"),
+        "rr_sl_mult":   trace.get("rr_sl_mult"),
+        "rr_tp_mult":   trace.get("rr_tp_mult"),
     }
+
 
 # ─── Wolfram Five-Cell filter ──────────────────────────────────────────────────
 def wolfram_cell_key(regime: str, score: float) -> tuple:
@@ -1374,6 +1987,17 @@ def passes_wolfram_five_cell_filter(regime: str, score: float, side: str = "") -
     })
     return (regime, score_bucket) in allowed
 
+def coherence_q_factor(side: str) -> float:
+    skew = _side_controller.get_skew()
+    if config.MAX_COHERENCE_OFFSET <= 0:
+        return 1.0
+    skew_norm = max(-1.0, min(1.0, skew / config.MAX_COHERENCE_OFFSET))
+    bias = config.Q_SIDE_BIAS_MAX
+    if side == "LONG":
+        return 1.0 - bias * max(0.0, skew_norm) + bias * max(0.0, -skew_norm)
+    else:
+        return 1.0 + bias * max(0.0, skew_norm) - bias * max(0.0, -skew_norm)
+
 # ─── Sovereign Q functional ────────────────────────────────────────────────────
 def compute_Q(candidate: dict) -> float:
     """
@@ -1404,7 +2028,7 @@ def compute_Q(candidate: dict) -> float:
     # Phi(OI ratio): OI vs mean. Default 0.5 when unavailable.
     phi_oi = min(max(float(candidate.get("oi_ratio", 0.5)) / 3.0, 0.0), 1.0)
 
-    return (
+    base_q = (
         a["vol_ratio"]    * phi_vol
         + a["inv_stop_pct"] * phi_stop
         + a["inv_rank"]     * phi_rank
@@ -1413,44 +2037,80 @@ def compute_Q(candidate: dict) -> float:
         + a["oi_ratio"]     * phi_oi
     )
 
+    return base_q * coherence_q_factor(candidate["side"])
+
 # Alias kept for any external references
 compute_rank_score = compute_Q
 
-# ─── Top-N selector ────────────────────────────────────────────────────────────
+# ─── Top-N selector (Minority-Slot doctrine) ───────────────────────────────────────
 def select_top_ranked_wolfram_signals(candidates: list) -> list:
-    # A. G_Omega filter + annotate with stable UUID
+    """
+    Sovereign Minority-Slot Ranking (Sprint B).
+    Guarantees: if ANY short survives all upstream gates, it gets the first slot.
+    Remaining slots are filled by the highest-Q longs, then an optional second short.
+    Falls back to pure-Q ranking when no shorts are present.
+    """
+    # A. G_Omega filter + annotate with stable UUID and Q score
     filtered = []
     for c in candidates:
         if passes_wolfram_five_cell_filter(c["regime"], c["score"], c.get("side", "")):
             c = dict(c)
-            c["_cid"]      = str(uuid.uuid4())
-            c["cell_key"]  = wolfram_cell_key(c["regime"], c["score"])
+            c["_cid"]       = str(uuid.uuid4())
+            c["cell_key"]   = wolfram_cell_key(c["regime"], c["score"])
             c["rank_score"] = compute_Q(c)
             entry = float(c.get("entry", 0))
-            c["stop_pct"]  = abs(entry - float(c.get("stop_loss", 0))) / entry * 100.0 if entry > 0 else 999.0
+            c["stop_pct"]   = abs(entry - float(c.get("stop_loss", 0))) / entry * 100.0 if entry > 0 else 999.0
             filtered.append(c)
 
-    # B. Sort by Q descending
-    filtered.sort(key=lambda x: x["rank_score"], reverse=True)
+    if not filtered:
+        return []
 
-    # C. Max 1 per cell
-    by_cell, seen = [], set()
-    for c in filtered:
-        if c["cell_key"] not in seen:
-            seen.add(c["cell_key"])
-            by_cell.append(c)
+    # B. Separate by side and sort each pool by Q descending
+    longs  = sorted([c for c in filtered if c["side"] == "LONG"],  key=lambda x: x["rank_score"], reverse=True)
+    shorts = sorted([c for c in filtered if c["side"] == "SHORT"], key=lambda x: x["rank_score"], reverse=True)
 
-    # D. Max 2 per side
-    by_side, counts = [], {"LONG": 0, "SHORT": 0}
-    for c in by_cell:
-        if counts.get(c["side"], 0) < MAX_SIGNALS_PER_SIDE:
-            counts[c["side"]] = counts.get(c["side"], 0) + 1
-            by_side.append(c)
+    # Deduplicate by cell within each pool (max 1 per regime x score_bucket cell)
+    def dedup_by_cell(pool):
+        seen, out = set(), []
+        for c in pool:
+            if c["cell_key"] not in seen:
+                seen.add(c["cell_key"])
+                out.append(c)
+        return out
+    longs  = dedup_by_cell(longs)
+    shorts = dedup_by_cell(shorts)
 
-    # E. Top 3 total
-    final = by_side[:MAX_SIGNALS_PER_SCAN]
+    selected = []
 
-    # Log rejections (UUID-stable)
+    # C. MINORITY SLOT: if any short exists, reserve the first slot for the best short
+    if shorts:
+        selected.append(shorts.pop(0))
+
+    # D. Fill remaining slots with the best longs
+    remaining = MAX_SIGNALS_PER_SCAN - len(selected)
+    taken_long = 0
+    for c in longs:
+        if taken_long >= min(remaining, MAX_SIGNALS_PER_SIDE):
+            break
+        selected.append(c)
+        taken_long += 1
+
+    # E. If there is still a free slot and another short exists, take it
+    if len(selected) < MAX_SIGNALS_PER_SCAN and shorts:
+        selected.append(shorts.pop(0))
+
+    # F. Hard-cap safety pass (auditable)
+    final = []
+    side_counts = {"LONG": 0, "SHORT": 0}
+    for c in selected:
+        if side_counts.get(c["side"], 0) >= MAX_SIGNALS_PER_SIDE:
+            continue
+        side_counts[c["side"]] = side_counts.get(c["side"], 0) + 1
+        final.append(c)
+        if len(final) >= MAX_SIGNALS_PER_SCAN:
+            break
+
+    # G. Log rejections (UUID-stable) and minority-slot result
     final_cids = {c["_cid"] for c in final}
     for c in filtered:
         if c["_cid"] not in final_cids:
@@ -1460,7 +2120,12 @@ def select_top_ranked_wolfram_signals(candidates: list) -> list:
                 "rank_score": float(round(c["rank_score"], 4)),
             })
 
+    logger.info(
+        "[MINORITY_SLOT] Selected: LONG=%d SHORT=%d | total_filtered=%d",
+        side_counts.get("LONG", 0), side_counts.get("SHORT", 0), len(filtered),
+    )
     return final
+
 
 # ─── Universe management ───────────────────────────────────────────────────────
 def refresh_active_universe() -> None:
@@ -1519,6 +2184,15 @@ def insert_signal(conn, sig: dict) -> None:
         "policy_version": policy_version,
         "policy_activated_at": policy_activated_at,
         "reason_trace": json.dumps(reason_trace, cls=_NumpyEncoder),
+        # Sprint D Calibration Fields
+        "prob_score":   sig.get("prob_score"),
+        "legacy_score": sig.get("legacy_score"),
+        "pwin":         sig.get("pwin"),
+        "score_mode":   sig.get("score_mode"),
+        "z_score":      reason_trace.get("z_score"),
+        "risk_scale":   reason_trace.get("risk_scale"),
+        "rr_sl_mult":   reason_trace.get("rr_sl_mult"),
+        "rr_tp_mult":   reason_trace.get("rr_tp_mult"),
     }
 
     # -- EXECUTION SNAPSHOT TIER --
@@ -1569,7 +2243,8 @@ def insert_signal(conn, sig: dict) -> None:
                 phase2_gate, phase2_allowed, phase2_score_multiplier,
                 setup_score, execution_score, spread_bps, est_slippage_bps, execution_snapshot_ts,
                 policy_version, policy_activated_at,
-                signal_family, reason_trace, logic_version, config_version
+                signal_family, reason_trace, logic_version, config_version,
+                prob_score, legacy_score, pwin, z_score, score_mode, risk_scale, rr_sl_mult, rr_tp_mult
             ) VALUES (
                 %(signal_id)s, %(pair)s, %(ts)s, %(side)s, %(entry)s,
                 %(stop_loss)s, %(take_profit)s, %(score)s, %(regime)s,
@@ -1577,7 +2252,8 @@ def insert_signal(conn, sig: dict) -> None:
                 %(phase2_gate)s, %(phase2_allowed)s, %(phase2_score_multiplier)s,
                 %(setup_score)s, %(execution_score)s, %(spread_bps)s, %(est_slippage_bps)s, %(execution_snapshot_ts)s,
                 %(policy_version)s, %(policy_activated_at)s,
-                %(signal_family)s, %(reason_trace)s::jsonb, %(logic_version)s, %(config_version)s
+                %(signal_family)s, %(reason_trace)s::jsonb, %(logic_version)s, %(config_version)s,
+                %(prob_score)s, %(legacy_score)s, %(pwin)s, %(z_score)s, %(score_mode)s, %(risk_scale)s, %(rr_sl_mult)s, %(rr_tp_mult)s
             ) ON CONFLICT (signal_id) DO NOTHING
             """,
             db_payload,
@@ -1751,7 +2427,7 @@ def _classify_signal_family(latest: pd.Series, df15: pd.DataFrame, regime: str, 
     # Scoring: squeeze OR (atr_expansion + volume surge)
     is_volatility = False
     if ENABLE_VOLATILITY:
-    is_volatility = (
+        is_volatility = (
             (ind['recent_squeeze_fire'] or ind['squeeze_fired']) and
             ind['vol_ratio'] >= 1.5
         ) or (
@@ -1834,38 +2510,119 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
         is_1h_bearish = _l1h["close"] < _l1h["ema50"]
         
         latest = df15.iloc[-1]
-        
-        # Base scores (Mock alpha for compute phase)
-        long_score,  long_trace  = score_long_signal(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
-        short_score, short_trace = score_short_signal(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
+        prev_bar = df15.iloc[-2]
+
+        # ── Sprint D: Probability-Primary Scoring ──────────────────────────────
+        # Step 1: Legacy template scores (kept as shadow comparison baseline)
+        long_score_legacy, long_trace_legacy = score_long_signal(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
+        short_score_pretemplates, short_trace_legacy = score_short_signal(latest, prev_bar, regime, {"funding_rate": 0, "ls_ratio": 1.0})
+
+        # Step 2: Probability model scores (primary)
+        long_score_prob,  long_trace_prob  = score_long_probability(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
+        short_score_prob, short_trace_prob = score_short_probability(latest, regime, {"funding_rate": 0, "ls_ratio": 1.0})
+
+        # Step 3: Family tags — inherit legacy short tag if present
+        long_family_tag  = str(long_trace_prob.get("family_tag", "prob_long"))
+        short_family_tag = str(short_trace_legacy.get("family_tag",
+                               short_trace_prob.get("family_tag", "prob_short")))
+
+        # Step 4: Probability floor gate (intrinsic edge check BEFORE blending)
+        hour_utc = latest["close_time"].hour
+        long_prob_ok,  long_prob_gate  = probability_gate("LONG",  long_family_tag,  long_score_prob, regime, hour_utc)
+        short_prob_ok, short_prob_gate = probability_gate("SHORT", short_family_tag, short_score_prob, regime, hour_utc)
+
+        # Step 5: Blend or fall back to legacy
+        if getattr(config, "USE_PROBABILITY_SCORER", True):
+            long_score_raw  = blend_primary_score(long_score_prob,  long_score_legacy)  if long_prob_ok  else 0.0
+            short_score_raw = blend_primary_score(short_score_prob, short_score_pretemplates) if short_prob_ok else 0.0
+        else:
+            long_score_raw  = long_score_legacy
+            short_score_raw = short_score_pretemplates
+
+        # Step 6: Compose full traces (probability primary + legacy shadow)
+        _score_mode = "blended_probability_primary" if getattr(config, "USE_PROBABILITY_SCORER", True) else "legacy_only"
+
+        long_trace = dict(long_trace_prob)
+        long_trace["legacy_score"]    = float(long_score_legacy)
+        long_trace["prob_score"]      = float(long_score_prob)
+        long_trace["score_mode"]      = _score_mode
+        long_trace["family_tag"]      = long_family_tag
+        long_trace["probability_gate"] = long_prob_gate
+        if not long_prob_ok:
+            long_trace["rejection_gate"] = long_prob_gate
+        long_trace["legacy_trace"]    = long_trace_legacy
+
+        short_trace = dict(short_trace_prob)
+        short_trace["legacy_score"]   = float(short_score_pretemplates)
+        short_trace["prob_score"]     = float(short_score_prob)
+        short_trace["score_mode"]     = _score_mode
+        short_trace["family_tag"]     = short_family_tag
+        short_trace["probability_gate"] = short_prob_gate
+        if not short_prob_ok:
+            short_trace["rejection_gate"] = short_prob_gate
+        short_trace["legacy_trace"]   = short_trace_legacy
+        if "template_scores" in short_trace_legacy:
+            short_trace["template_scores"] = short_trace_legacy["template_scores"]
+
+        # Step 7: Telemetry — visible in PM2 logs for cutover validation
+        logger.info(
+            "[SCORE CUTOVER] sym=%s regime=%s btc=%s "
+            "long_prob=%.2f long_legacy=%.2f long_raw=%.2f "
+            "short_prob=%.2f short_legacy=%.2f short_raw=%.2f "
+            "long_gate=%s short_gate=%s short_family=%s",
+            pair, regime, btc_regime,
+            float(long_score_prob), float(long_score_legacy), float(long_score_raw),
+            float(short_score_prob), float(short_score_pretemplates), float(short_score_raw),
+            long_prob_gate, short_prob_gate, short_family_tag,
+        )
+
+        # Step 8: Short context penalties applied AFTER probability gating + blend
+        if short_score_raw > 0:
+            short_score_after_ctx, short_penalty_trace = apply_short_context_penalties(
+                short_score_raw,
+                short_family_tag,
+                regime,
+                btc_regime,
+            )
+            short_trace["context_penalties"] = short_penalty_trace
+            short_score = short_score_after_ctx
+        else:
+            short_score = short_score_raw
+
+        long_score = long_score_raw
+
+        # --- Directional shadow model (symmetric, only logging) ---
+        alpha_default = {"funding_rate": 0, "ls_ratio": 1.0}
+        directional = compute_directional_score(latest, prev_bar, regime, alpha_default, df15)
+
 
         # 2. Dynamic Coherence Tuning (v2.0 Doctrine - Push/Pull Symmetry)
-        skew = _side_controller.get_skew()
-        
-        # Capture raw scores before doctrine adjustment
-        long_score_raw  = long_score
-        short_score_raw = short_score
-        
-        # Apply Symmetric Field: subtract skew from Longs, add skew to Shorts
-        # Positive Skew (Long-heavy) -> Longs penalized (-), Shorts boosted (+)
-        # Negative Skew (Short-heavy) -> Longs boosted (+), Shorts penalized (-)
-        long_score_coh  = long_score_raw - skew
-        short_score_coh = short_score_raw + skew
-        
-        # Enforce "Do No Harm" Floor: Boost cannot rescue garbage (Score < 40)
-        # If boosting Longs (skew < 0)
-        if skew < 0 and long_score_raw < COHERENCE_RESCUE_FLOOR:
-            long_adj = long_score_raw # No boost
-        else:
-            long_adj = long_score_coh
+        # Only active in coherence-enabled profiles (sim_coherence_v1).
+        # In live profiles, skew = 0 → no effect.
+        if COHERENCE_ENABLED:
+            skew = _side_controller.get_skew()
             
-        # If boosting Shorts (skew > 0)
-        if skew > 0 and short_score_raw < COHERENCE_RESCUE_FLOOR:
-            short_adj = short_score_raw # No boost
-        else:
-            short_adj = short_score_coh
+            long_score_raw  = long_score
+            short_score_raw = short_score
             
-        long_score, short_score = long_adj, short_adj
+            long_score_coh  = long_score_raw - skew
+            short_score_coh = short_score_raw + skew
+            
+            # Do-No-Harm Floor: boost cannot rescue garbage
+            if skew < 0 and long_score_raw < COHERENCE_RESCUE_FLOOR:
+                long_adj = long_score_raw
+            else:
+                long_adj = long_score_coh
+                
+            if skew > 0 and short_score_raw < COHERENCE_RESCUE_FLOOR:
+                short_adj = short_score_raw
+            else:
+                short_adj = short_score_coh
+                
+            long_score, short_score = long_adj, short_adj
+        else:
+            skew = 0.0
+            short_score_coh = short_score  # not adjusted - define for telemetry refs below
 
         # 3. Gate Validation (Soft Penalties)
         if (time.time() - latest["close_time"].timestamp()) > DATA_FRESHNESS_MAX_SECONDS:
@@ -1928,23 +2685,29 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
                     "trace": short_trace,
                 })
 
+        # Keep track of what specifically killed the short
+        short_rejection_gate = None
+        _tpl = (short_trace.get("template_scores") or {})
+        any_template_nonzero = any(v > 0 for v in _tpl.values()) if _tpl else short_score_pretemplates > 0
+        if short_score == 0 and any_template_nonzero:
+             short_rejection_gate = "exhaustion"
+
         # Track regime blocks before family classification
+        # Profile-aware: soft penalty in sim, hard block in live.
         if BLOCK_AGAINST_REGIME:
-            if regime in ("STRONG_UPTREND", "UPTREND") and short_score > 0:
-                short_score = 0
-                with _telemetry_lock:
-                    _family_telemetry["rejected_by_gate"]["regime_block"]["none"] += 1
             if regime in ("STRONG_DOWNTREND", "DOWNTREND") and long_score > 0:
-                long_score = 0
+                if SOFT_REGIME_GATE:
+                    long_score -= REGIME_SOFT_PENALTY
+                else:
+                    long_score = 0
                 with _telemetry_lock:
                     _family_telemetry["rejected_by_gate"]["regime_block"]["none"] += 1
 
         if btc_blocks_longs and long_score > 0:
-            long_score = 0
-            with _telemetry_lock:
-                _family_telemetry["rejected_by_gate"]["btc_block"]["none"] += 1
-        if btc_blocks_shorts and short_score > 0:
-            short_score = 0
+            if SOFT_BTC_GATE:
+                long_score -= BTC_SOFT_PENALTY
+            else:
+                long_score = 0
             with _telemetry_lock:
                 _family_telemetry["rejected_by_gate"]["btc_block"]["none"] += 1
 
@@ -1953,17 +2716,59 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
             with _telemetry_lock:
                 _family_telemetry["rejected_by_gate"]["1h_trend"]["none"] += 1
         if not is_1h_bearish and short_score > 0:
-            short_score = 0
-            with _telemetry_lock:
-                _family_telemetry["rejected_by_gate"]["1h_trend"]["none"] += 1
+            # Allow failed bounces to bypass 1h trend checks, they are inherently counter-trend structural plays
+            if short_trace.get("family_tag") != "failed_bounce":
+                short_score = 0
+                short_rejection_gate = short_rejection_gate or "1h_trend"
+                with _telemetry_lock:
+                    _family_telemetry["rejected_by_gate"]["1h_trend"]["none"] += 1
+        # >>> SPRINT B: Near-Miss & Hit-Rate Telemetry Block <<<
+        with _telemetry_lock:
+            if short_score_pretemplates == 0:
+                _family_telemetry["short_attrition"]["short_template_zero"] += 1
+            elif short_score_pretemplates > 0 and short_score_pretemplates < COHERENCE_RESCUE_FLOOR and short_score_coh >= COHERENCE_RESCUE_FLOOR:
+                 # It would have survived with coherence, but raw was below floor
+                 _family_telemetry["short_attrition"]["short_floor_denied"] += 1
+            
+            if short_score_pretemplates > 0: # It actually matched a template natively
+                # Determine if it missed by <5, <10, <15 from baseline 50
+                missed_by = max(0, 50 - short_score)
+                miss_band = "<5" if missed_by <= 5 else ("<10" if missed_by <= 10 else ("<15" if missed_by <= 15 else ">15"))
+                
+                log_str = (
+                    f"[SHORT_CANDIDATE] sym={pair} "
+                    f"raw={short_score_pretemplates:.1f} coh_adj={short_score_coh:.1f} final={short_score:.1f} "
+                    f"fb={_tpl.get('failed_bounce',0):.1f} bd={_tpl.get('breakdown',0):.1f} mr={_tpl.get('mean_reversion',0):.1f} "
+                    f"family={short_trace.get('family_tag','none')} "
+                )
+                if short_score < 50:
+                    short_rejection_gate = short_rejection_gate or "wolfram_five_cell (score < 50)"
+                    log_str += f"NEAR_MISS: {miss_band} pt miss. KILLED_BY: {short_rejection_gate}"
+                    
+                    if missed_by <= 5:
+                        _family_telemetry["short_attrition"]["short_near_miss_lt5"] += 1
+                    elif missed_by <= 10:
+                        _family_telemetry["short_attrition"]["short_near_miss_lt10"] += 1
+                    else:
+                        _family_telemetry["short_attrition"]["short_killed_by_gate"] += 1
+                        
+                else:
+                    log_str += "SURVIVED_GATES: Pass to Wolfram / Post-Selection"
+                    _family_telemetry["short_attrition"]["short_emitted"] += 1
+    
+                logger.info(log_str)
+        # >>> END TELEMETRY BLOCK <<<
 
         price   = float(latest["close"])
         atr_val = float(latest["atr14"])
 
-        # Process both sides for training data collection - ALWAYS create 2 rows
         for side, score, trace in (("LONG", long_score, long_trace), ("SHORT", short_score, short_trace)):
             # Classify signal family BEFORE gate checks (to track which family gets killed by which gate)
             signal_family, family_indicators = _classify_signal_family(latest, df15, regime, side)
+            
+            # (Sprint B) Override short family with the specific alpha template tag
+            if side == "SHORT" and trace and "family_tag" in trace:
+                signal_family = trace["family_tag"]
             
             with _telemetry_lock:
                 _family_telemetry["assigned"][signal_family] += 1
@@ -1983,6 +2788,11 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
                 "trace": trace,
                 "would_have_passed_live": False,
                 "rejection_gate": None,
+                "directional_long_score": directional["directional_long_score"],
+                "directional_short_score": directional["directional_short_score"],
+                "directional_net": directional["directional_net"],
+                "directional_margin": directional["directional_margin"],
+                "directional_primary_side": directional["directional_primary_side"],
             }
             
             # Initialize vwap_delta early to avoid scope issues
@@ -2006,10 +2816,10 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
                 with _telemetry_lock:
                     _family_telemetry["rejected_by_gate"]["min_score"][signal_family] += 1
             
-            # 3. Regime block gate
+            # 3. Regime block gate — only applies to LONG in downtrend.
+            # Shorts are handled upstream by apply_short_context_penalties (bounded, auditable).
             elif BLOCK_AGAINST_REGIME:
-                if (regime in ("STRONG_UPTREND", "UPTREND") and side == "SHORT") or \
-                   (regime in ("STRONG_DOWNTREND", "DOWNTREND") and side == "LONG"):
+                if regime in ("STRONG_DOWNTREND", "DOWNTREND") and side == "LONG":
                     rejection_gate = "regime_block"
                     with _telemetry_lock:
                         _family_telemetry["rejected_by_gate"]["regime_block"][signal_family] += 1
@@ -2081,7 +2891,13 @@ def analyze_pair(pair_idx_tuple: Tuple[str, int], btc_regime: str, btc_blocks_lo
                         "btc_regime": btc_regime,
                         "signal_family": signal_family,
                         "family_indicators": family_indicators,
+                        # Sprint D: probability scorer fields for ranking + telemetry
+                        "pwin":         float(trace.get("pwin", 0.0)),
+                        "prob_score":   float(trace.get("prob_score", score)),
+                        "legacy_score": float(trace.get("legacy_score", score)),
+                        "score_mode":   str(trace.get("score_mode", "legacy_only")),
                     }
+
             else:
                 # REJECTED by specific gate
                 training_row["rejection_gate"] = rejection_gate
@@ -2170,6 +2986,12 @@ def scan_once() -> None:
                         feature_version=tr.get("feature_version", "v1.0"),
                         family_indicators=tr.get("family_indicators", {}),
                         trace=tr.get("trace", {}),
+                        # NEW
+                        directional_long_score=tr.get("directional_long_score"),
+                        directional_short_score=tr.get("directional_short_score"),
+                        directional_net=tr.get("directional_net"),
+                        directional_margin=tr.get("directional_margin"),
+                        directional_primary_side=tr.get("directional_primary_side"),
                     )
                     tr["training_candidate_id"] = inserted_training_id
                     candidate_ref = r.get("candidate")
@@ -2243,7 +3065,9 @@ def scan_once() -> None:
                 if candidate["side"] == "LONG":
                     candidate["score"], candidate["reason_trace"] = score_long_signal(candidate["latest"], candidate["regime"], alpha)
                 else:
-                    candidate["score"], candidate["reason_trace"] = score_short_signal(candidate["latest"], candidate["regime"], alpha)
+                    _df15 = candidate.get("df15")
+                    _prev_bar = _df15.iloc[-2] if _df15 is not None and len(_df15) >= 2 else candidate["latest"]
+                    candidate["score"], candidate["reason_trace"] = score_short_signal(candidate["latest"], _prev_bar, candidate["regime"], alpha)
 
                 candidate.setdefault("reason_trace", {})
                 candidate["reason_trace"]["execution_hour_utc"] = _get_execution_hour_utc(candidate["latest"])
@@ -2400,41 +3224,28 @@ def scan_once() -> None:
                 candidates.append(candidate)
 
             selected = select_top_ranked_wolfram_signals(candidates)
-            # ── v1.5 Filter Patch: pre-emission gates ──────────────
-            _V15_BLOCKED_FAMILIES = {"VOLATILITY", "volatility"}
-            _V15_TREND_MIN_SCORE = 60.0
+            # ── Idim Gate Patch v1 (Post-Execution Selection) ──────
             emitted = []
             for s in selected:
-                _fam = s.get("signal_family", "none")
-                _regime = s.get("regime", "")
-                _score = float(s.get("score", 0))
-                _pair = s["pair"]
-                _side = s["side"]
-
-                # Gate 1 — RANGING regime has no edge (25% WR, -16.4R)
-                if _regime == "RANGING":
+                # Normalizing for apply_gates expectation
+                _s_dict = {
+                    'pair': s['pair'],
+                    'side': s['side'],
+                    'score': float(s['score']),
+                    'regime': s.get('regime', ''),
+                    'btc_regime': s.get('btc_regime', 'UNKNOWN'),
+                    'family': (s.get('signal_family') or 'none').upper()
+                }
+                
+                ok, reason = apply_gates(_s_dict)
+                if not ok:
                     logger.info(
-                        "[GATE_BLOCKED] reason=ranging_regime pair=%s side=%s score=%.2f regime=%s family=%s",
-                        _pair, _side, _score, _regime, _fam,
+                        '[GATE_BLOCKED] reason=%s pair=%s side=%s score=%.2f regime=%s family=%s',
+                        reason, s['pair'], s['side'], s['score'], 
+                        s.get('regime', ''), s.get('signal_family', 'none')
                     )
                     continue
-
-                # Gate 2 — VOLATILITY family suspended (0/3, no basis)
-                if _fam in _V15_BLOCKED_FAMILIES:
-                    logger.info(
-                        "[GATE_BLOCKED] reason=blocked_family pair=%s side=%s score=%.2f regime=%s family=%s",
-                        _pair, _side, _score, _regime, _fam,
-                    )
-                    continue
-
-                # Gate 3 — TREND family score floor (loss avg 55.36, win avg 62.18)
-                if _fam in ("TREND", "trend") and _score < _V15_TREND_MIN_SCORE:
-                    logger.info(
-                        "[GATE_BLOCKED] reason=trend_score_floor pair=%s side=%s score=%.2f regime=%s family=%s",
-                        _pair, _side, _score, _regime, _fam,
-                    )
-                    continue
-
+                
                 emitted.append(s)
             # ── end v1.5 Filter Patch ──────────────────────────────
 
@@ -2474,12 +3285,16 @@ def scan_once() -> None:
             duration = time.time() - started
             _LAST_SCAN_TS = started
             
-            # Coherence Monitoring (v2.0 Doctrine - Push/Pull)
+            # Coherence Monitoring (v2.0 Doctrine)
             coh = _side_controller.get_stats()
+            delta_coh = abs(coh['long_share'] - 0.5)
             skew_label = "L-Heavy" if coh['skew'] > 0 else "S-Heavy" if coh['skew'] < 0 else "Neutral"
+            coh_status = "ACTIVE" if COHERENCE_ENABLED else "MONITOR-ONLY"
             logging.info(
-                f"[COHERENCE] long_share={coh['long_share']:.1%} | skew={coh['skew']:+.1f} ({skew_label}) | "
-                f"window={coh['rolling_n']}/{COHERENCE_WINDOW}"
+                f"[COHERENCE] status={coh_status} | long_share={coh['long_share']:.1%} | "
+                f"delta={delta_coh:.3f} | skew={coh['skew']:+.1f} ({skew_label}) | "
+                f"window={coh['rolling_n']}/{COHERENCE_WINDOW} | "
+                f"gates=regime:{'soft' if SOFT_REGIME_GATE else 'hard'}/btc:{'soft' if SOFT_BTC_GATE else 'hard'}"
             )
 
             # Family-level telemetry summary (strategic visibility)
@@ -2517,14 +3332,14 @@ def scan_once() -> None:
                 "setups_blocked_phase2": setups_blocked_phase2,
                 "worker_rejected": rejected_count,
                 "errors": error_count,
-                "signals_emitted": len(selected),
+                "signals_emitted": len(emitted),
                 "legacy_candidates": passed_count,
                 "duration_sec": round(duration, 2),
                 "next_scan_sec": SCAN_INTERVAL_SECONDS
             }
             alert_operational_event(
                 "cycle_complete",
-                f"Scan cycle completed: {pairs_processed} pairs / {len(selected)} signals emitted",
+                f"Scan cycle completed: {pairs_processed} pairs / {len(emitted)} signals emitted",
                 metrics,
             )
             

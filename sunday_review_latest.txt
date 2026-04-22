@@ -1,0 +1,76 @@
+============================================================
+IDIM IKANG - SUNDAY DATA COLLECTION REPORT
+Date: 2026-04-18 (Sunday)
+============================================================
+
+1. TRAINING DATA OVERVIEW
+------------------------------
+Total Training Records: 5,841
+Unique Symbols: 40
+Sides Covered: 2 (LONG/SHORT)
+Days Collected: 1
+
+2. SIGNAL ACTIVITY
+--------------------
+Total Signals Generated: 18
+Executed Signals: 0
+Resolved Signals: 17
+Wins: 5
+Losses: 12
+
+3. REJECTION GATE ANALYSIS
+------------------------------
+score_zero     :   3730 ( 63.9%)
+volume         :   1174 ( 20.1%)
+PASSED         :    639 ( 10.9%)
+exhaustion     :    134 (  2.3%)
+min_score      :    121 (  2.1%)
+phase2_cooldown:     34 (  0.6%)
+phase2_ranging_long_block:      9 (  0.2%)
+
+4. SIGNAL FAMILY DISTRIBUTION
+-----------------------------------
+trend          :   2921 ( 50.0%)
+none           :   2337 ( 40.0%)
+volatility     :    241 (  4.1%)
+momentum       :    204 (  3.5%)
+mean_reversion :    138 (  2.4%)
+
+5. MARKET REGIME COVERAGE
+------------------------------
+STRONG_UPTREND      :   3242
+UPTREND             :   2046
+RANGING             :    389
+DOWNTREND           :    164
+
+6. HOURLY COLLECTION RATE
+------------------------------
+00:00 - 00:59:  729 records
+01:00 - 01:59:  726 records
+02:00 - 02:59:   60 records
+08:00 - 08:59:  552 records
+09:00 - 09:59:  729 records
+10:00 - 10:59:  732 records
+11:00 - 11:59:  768 records
+12:00 - 12:59:  753 records
+18:00 - 18:59:  188 records
+19:00 - 19:59:  446 records
+20:00 - 20:59:  158 records
+
+7. DATA QUALITY METRICS
+------------------------------
+Total Records: 5,841
+With Family Indicators: 5841 (100.0%)
+With Trace Data: 5841 (100.0%)
+With Positive Score: 1899 (32.5%)
+
+8. RECENT SCANNER PERFORMANCE
+-----------------------------------
+20:00:  158 records/hour
+19:00:  446 records/hour
+18:00:  188 records/hour
+
+============================================================
+REPORT SUMMARY: Data collection operating normally
+60 records per cycle (30 pairs × 2 sides)
+============================================================

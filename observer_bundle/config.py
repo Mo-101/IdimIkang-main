@@ -27,11 +27,11 @@ CURRENT_CONFIG_VERSION = "v1.5-quant-alpha"
 CLASSIFIER_VERSION = "family_v2"
 CURRENT_POLICY_VERSION = os.environ.get(
     "CURRENT_POLICY_VERSION",
-    "phase2_data_burst_v1_familyfix" if TEMP_DATA_BURST_ACTIVE else "phase2_v1",
+    "phase2_rr_repair_v1"
 )
 POLICY_ACTIVATED_AT = os.environ.get(
     "POLICY_ACTIVATED_AT",
-    "2026-04-09T12:30:00Z" if TEMP_DATA_BURST_ACTIVE else "2026-04-09T11:11:40Z",
+    "2026-04-19T00:00:00Z"
 )
 
 # Outcome Rules
@@ -91,9 +91,15 @@ FEATURE_VERSION = "v1.1"
 
 # ─── Family flags ───────────────────────────────────────────────────────────
 ENABLE_TREND = True
-ENABLE_VOLATILITY = True
+ENABLE_VOLATILITY = False
 ENABLE_MEAN_REVERSION = True
 ENABLE_MOMENTUM = True
+
+# --- Win Rate Optimization (Controlled Tightening) ---
+MIN_UNCLASSIFIED_PROB_SCORE = float(os.environ.get("MIN_UNCLASSIFIED_PROB_SCORE", "55.0"))
+BREAKDOWN_THRESHOLD_UPLIFT = float(os.environ.get("BREAKDOWN_THRESHOLD_UPLIFT", "8.0"))
+DEGRADED_HOUR_THRESHOLD_UPLIFT = float(os.environ.get("DEGRADED_HOUR_THRESHOLD_UPLIFT", "5.0"))
+DEGRADED_HOURS_UTC = set(map(int, os.environ.get("DEGRADED_HOURS_UTC", "6,7").split(",")))
 
 # Scan profile selection: live strict vs sim loose
 if ENABLE_LIVE_TRADING:
@@ -135,8 +141,8 @@ if ENABLE_LIVE_TRADING:
             ("RANGING", 60),
         }
 else:
-    # Sim loose thresholds for data collection (permissive)
-    SCAN_PROFILE = "sim_loose_v1"
+    # Sim coherence profile: exploratory with soft-gating + side-balance controller
+    SCAN_PROFILE = "sim_coherence_v1"
     MIN_SIGNAL_SCORE = 20
     ADX_MIN_THRESHOLD = 15
     ATR_STRETCH_MAX = 2.5
@@ -176,33 +182,79 @@ BLOCK_RANGING_LONG = True
 # 1c. Side-Balance Coherence (v2.0 Doctrine)
 COHERENCE_WINDOW = 200
 COHERENCE_STABILIZING_BAND = (0.40, 0.60)
-SIDE_BALANCE_LAMBDA = 25.0  # Dynamic offset sensitivity
-MAX_COHERENCE_OFFSET = 15.0 # Max penalty/boost cap to prevent over-optimization
-COHERENCE_RESCUE_FLOOR = 40.0 # Min raw score required to receive a coherence boost
+SIDE_BALANCE_LAMBDA = 25.0       # Dynamic offset sensitivity
+MAX_COHERENCE_OFFSET = 15.0      # ±15 cap restored to boost Doctrine B throughput
+COHERENCE_RESCUE_FLOOR = 40.0    # Min raw score required to receive a coherence boost
+SIDE_SEPARATION_MARGIN = 5.0     # Min |long_adj - short_adj| to avoid noise flipping
+
+# --- Short-side structural constants ---
+SHORT_FAILED_BOUNCE_RECLAIM_ATR_MAX = 1.25
+SHORT_BREAKDOWN_STRETCH_MAX = 3.00
+SHORT_MEAN_REVERSION_VWAP_EXT_PCT = 0.02
+
+# --- Soft penalties (bounded, additive, auditable) ---
+FAILED_BOUNCE_UPTREND_PENALTY = 6.0
+FAILED_BOUNCE_BTC_UPTREND_PENALTY = 6.0
+GENERIC_SHORT_BTC_UPTREND_PENALTY = 10.0
+GENERIC_SHORT_UPTREND_BLOCK = True   
+
+# --- Coherence weighting at ranking layer ---
+Q_SIDE_BIAS_MAX = 0.15   # bounded 15% ranking bias
+# Profile-specific coherence gating
+# These determine whether the coherence controller and soft-gating are active.
+# Live profiles: hard blocks, no coherence offsets.
+# Sim profiles: soft penalties, coherence enabled.
+if ENABLE_LIVE_TRADING:
+    COHERENCE_ENABLED = False        # No side-balance offsets in live until proven
+    SOFT_REGIME_GATE = False         # Local regime contradiction = hard block
+    SOFT_BTC_GATE = False            # BTC macro contradiction = hard block
+else:
+    COHERENCE_ENABLED = True         # Side-balance offsets active in sim
+    SOFT_REGIME_GATE = True          # Local regime contradiction = -12 penalty
+    SOFT_BTC_GATE = True             # BTC macro contradiction = -15 penalty
+
+REGIME_SOFT_PENALTY = 12.0           # Soft penalty for local regime contradiction
+BTC_SOFT_PENALTY = 15.0              # Soft penalty for BTC macro contradiction
+
+# ─── Sprint D: Probability Score Cutover ─────────────────────────────────────
+USE_PROBABILITY_SCORER         = True   # Use probability model as primary scorer
+PROBABILITY_PRIMARY_WEIGHT     = 0.75   # Weight for probability score in blend
+LEGACY_SHADOW_WEIGHT           = 0.25   # Weight for legacy heuristic score in blend
+
+# Minimum probability-score floors (0-100 scale, 50 = breakeven sigmoid)
+MIN_LONG_PROB_SCORE            = 52.0   # Longs need at least p=0.52 estimated win
+MIN_SHORT_PROB_SCORE           = 52.0   # Shorts need at least p=0.52 estimated win
+MIN_FAILED_BOUNCE_SHORT_PROB_SCORE = 55.0  # Counter-trend shorts need higher floor
+
+# --- Sprint D: Regime Priors (Sovereign Nudge in z-space) ---
+LONG_UPTREND_Z_PRIOR           = float(os.environ.get("LONG_UPTREND_Z_PRIOR", "0.35"))
+LONG_STRONG_UPTREND_Z_PRIOR    = float(os.environ.get("LONG_STRONG_UPTREND_Z_PRIOR", "0.50"))
+SHORT_DOWNTREND_Z_PRIOR        = float(os.environ.get("SHORT_DOWNTREND_Z_PRIOR", "0.35"))
+SHORT_STRONG_DOWNTREND_Z_PRIOR = float(os.environ.get("SHORT_STRONG_DOWNTREND_Z_PRIOR", "0.50"))
 
 
 if TEMP_DATA_BURST_ACTIVE and ENABLE_LIVE_TRADING:
     REGIME_SIDE_MULTIPLIER = {
-        "STRONG_UPTREND":   {"LONG": 1.20, "SHORT": 0.00},
+        "STRONG_UPTREND":   {"LONG": 1.20, "SHORT": 0.65},  # bounded penalty not zero
         "UPTREND":          {"LONG": 1.00, "SHORT": 0.80},
         "RANGING":          {"LONG": 0.00, "SHORT": 0.90},
         "DOWNTREND":        {"LONG": 0.80, "SHORT": 1.00},
         "STRONG_DOWNTREND": {"LONG": 0.00, "SHORT": 1.20},
     }
-    DEAD_HOURS_UTC = {13}
+    DEAD_HOURS_UTC = {0, 4, 7, 19}
     HOUR_MULTIPLIER = {
         16: 0.85,
         17: 0.80,
     }
 else:
     REGIME_SIDE_MULTIPLIER = {
-        "STRONG_UPTREND":   {"LONG": 1.30, "SHORT": 0.00},
+        "STRONG_UPTREND":   {"LONG": 1.30, "SHORT": 0.65},  # bounded penalty not zero
         "UPTREND":          {"LONG": 1.00, "SHORT": 0.70},
         "RANGING":          {"LONG": 0.00, "SHORT": 0.80},
         "DOWNTREND":        {"LONG": 0.70, "SHORT": 1.00},
         "STRONG_DOWNTREND": {"LONG": 0.00, "SHORT": 1.30},
     }
-    DEAD_HOURS_UTC = {13}
+    DEAD_HOURS_UTC = {0, 4, 7, 19}
     HOUR_MULTIPLIER = {
         16: 0.75,
         17: 0.70,

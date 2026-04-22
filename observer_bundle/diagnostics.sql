@@ -1,36 +1,45 @@
--- Task 2: Check logic version distribution
-SELECT logic_version, COUNT(*) 
-FROM signals 
-GROUP BY logic_version 
-ORDER BY logic_version;
-
--- Task 3A: Regime distribution over observation window
-SELECT regime, COUNT(*) as signal_count,
-       MIN(ts) as first_signal,
-       MAX(ts) as last_signal
+-- Query 1: Persistence on signals
+SELECT
+  ts,
+  pair,
+  side,
+  prob_score,
+  legacy_score,
+  pwin,
+  z_score,
+  score_mode,
+  risk_scale,
+  rr_sl_mult,
+  rr_tp_mult
 FROM signals
-WHERE logic_version = 'v1.3-ranked-observer'
-GROUP BY regime
-ORDER BY signal_count DESC;
+ORDER BY ts DESC
+LIMIT 20;
 
--- Task 3B: Pair distribution within STRONG_UPTREND cell
-SELECT pair, regime, CAST(score AS int) / 5 * 5 as score_bucket, 
-       COUNT(*) as signals
+-- Query 2: Aggregate sanity check on signals
+SELECT
+  COUNT(*) AS total,
+  COUNT(prob_score) AS prob_score_nonnull,
+  COUNT(legacy_score) AS legacy_score_nonnull,
+  COUNT(pwin) AS pwin_nonnull,
+  COUNT(z_score) AS z_score_nonnull,
+  COUNT(score_mode) AS score_mode_nonnull
 FROM signals
-WHERE logic_version = 'v1.3-ranked-observer'
-  AND regime = 'STRONG_UPTREND'
-GROUP BY pair, regime, score_bucket
-ORDER BY signals DESC;
+WHERE ts > NOW() - INTERVAL '24 hours';
 
--- Task 4A: Stuck signals older than 24h with NULL outcome
-SELECT COUNT(*) as stuck_signals
+-- Query 3: Side split (last 24h)
+SELECT side, COUNT(*)
 FROM signals
-WHERE outcome IS NULL
-  AND ts < NOW() - INTERVAL '24 hours';
--- Task 4B: Recent outcome tracker resolution activity
-SELECT outcome, COUNT(*) as count, 
-       MAX(ts) as most_recent
-FROM signals 
-WHERE logic_version = 'v1.3-ranked-observer'
-GROUP BY outcome
-ORDER BY outcome;
+WHERE ts > NOW() - INTERVAL '24 hours'
+GROUP BY side;
+
+-- Query 4: Probability distribution (last 24h) from training_candidates
+SELECT
+  side,
+  ROUND(AVG((trace_data->>'prob_score')::numeric), 2) AS avg_prob_score,
+  ROUND(MAX((trace_data->>'prob_score')::numeric), 2) AS max_prob_score,
+  ROUND(MIN((trace_data->>'prob_score')::numeric), 2) AS min_prob_score,
+  COUNT(*) AS rows
+FROM training_candidates
+WHERE created_at > NOW() - INTERVAL '24 hours'
+  AND trace_data ? 'prob_score'
+GROUP BY side;
