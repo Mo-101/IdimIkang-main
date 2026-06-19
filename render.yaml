@@ -1,0 +1,99 @@
+services:
+  # --- API (FastAPI) ---
+  - type: web
+    name: idim-api
+    runtime: python
+    rootDir: observer_bundle
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: IDIM_DATABASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: BINANCE_BASE_URL
+        value: https://api.binance.com
+
+  # --- Scanner (background worker) ---
+  - type: worker
+    name: idim-scanner
+    runtime: python
+    rootDir: observer_bundle
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scanner.py
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: BINANCE_BASE_URL
+        value: https://api.binance.com
+      - key: SCAN_INTERVAL_SECONDS
+        value: "60"
+      - key: LOOKBACK_15M
+        value: "500"
+      - key: LOOKBACK_4H
+        value: "300"
+      - key: LOGIC_VERSION
+        value: v1.0-baseline-observer
+      - key: CONFIG_VERSION
+        value: v1.0-baseline-observer
+
+  # --- Outcome tracker (background worker) ---
+  # NOTE: this is the file with the known is_partial / chk_partial_consistency
+  # bug and the max_adv_pct NameError (see Phase 2 fix list). Do not rely on
+  # this in an always-on cloud deployment until both are fixed and verified.
+  - type: worker
+    name: idim-outcome-tracker
+    runtime: python
+    rootDir: observer_bundle
+    buildCommand: pip install -r requirements.txt
+    startCommand: python outcome_tracker.py --loop
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: BINANCE_BASE_URL
+        value: https://api.binance.com
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: SIGNAL_EXPIRY_DAYS
+        value: "3"
+
+  # --- Auto executor (background worker, gated) ---
+  # Triple-gate doctrine: ENABLE_LIVE_TRADING must be explicitly "true" AND a
+  # valid LIVE_TRADING_UNLOCK_TOKEN must be set, or it stays in simulation mode.
+  # Leave ENABLE_LIVE_TRADING unset/false for Render unless live trading is a
+  # deliberate, confirmed decision.
+  - type: worker
+    name: idim-auto-executor
+    runtime: python
+    rootDir: observer_bundle
+    buildCommand: pip install -r requirements.txt
+    startCommand: python auto_executor.py
+    plan: starter
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: ENABLE_LIVE_TRADING
+        value: "false"
+      - key: LIVE_TRADING_UNLOCK_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false

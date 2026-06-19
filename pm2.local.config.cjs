@@ -1,4 +1,4 @@
-const repoRoot = '/home/idona/MoStar/IdimIkang-main-1';
+const repoRoot = '/home/idona/MoStar/_apps/financial/IdimIkang-main';
 const observerRoot = `${repoRoot}/observer_bundle`;
 const venvPython = `${observerRoot}/.venv/bin/python`;
 
@@ -22,7 +22,7 @@ module.exports = {
         inlineApp('funding-collector', venvPython, ['funding_collector.py']),
         inlineApp('oi-collector', venvPython, ['oi_collector.py']),
         inlineApp('ls-ratio-collector', venvPython, ['ls_ratio_collector.py']),
-        inlineApp('idim-api', venvPython, ['-m', 'uvicorn', 'api:app', '--host', '0.0.0.0', '--port', '8787']),
+        inlineApp('idim-api', venvPython, ['-m', 'uvicorn', 'api:app', '--host', '0.0.0.0', '--port', '41050']),
         inlineApp('idim-scanner', venvPython, ['scanner.py']),
         inlineApp('idim-outcome-tracker', venvPython, ['outcome_tracker.py', '--loop']),
         inlineApp('idim-auto-executor', venvPython, ['auto_executor.py']),

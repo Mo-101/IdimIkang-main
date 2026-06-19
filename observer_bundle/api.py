@@ -41,6 +41,7 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 PM2_SCANNER_NAME = os.environ.get("PM2_SCANNER_NAME", "idim-scanner")
+IDIM_API_PORT = os.environ.get("IDIM_API_PORT", "41050")
 
 CURRENT_LOGIC_VERSION = config.CURRENT_LOGIC_VERSION
 CURRENT_CONFIG_VERSION = config.CURRENT_CONFIG_VERSION
@@ -294,7 +295,9 @@ class MarginRequest(BaseModel):
 def health():
     listener = getattr(app.state, "pg_listener", None)
     return {
-        "status": "online",
+        "status": "ok",
+        "service": "idim-api",
+        "port": int(IDIM_API_PORT),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "logic_version": CURRENT_LOGIC_VERSION,
         "config_version": CURRENT_CONFIG_VERSION,
@@ -383,6 +386,66 @@ def signals(all_history: bool = Query(False)):
         rows = cur.fetchall()
 
     return {"count": len(rows), "signals": _to_builtin(rows)}
+
+
+@router.get("/signals/shadow")
+def shadow_signals(limit: int = Query(100)):
+    """Returns would_have_passed_live=true candidates as shadow signals"""
+    with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        query = """
+            SELECT * FROM training_candidates
+            WHERE would_have_passed_live = true
+            ORDER BY ts DESC
+            LIMIT %s
+        """
+        cur.execute(query, (limit,))
+        rows = cur.fetchall()
+
+    return {"count": len(rows), "shadow_signals": _to_builtin(rows)}
+
+
+@router.get("/candidates")
+def candidates(limit: int = Query(100)):
+    """Returns recent training_candidates"""
+    with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        query = """
+            SELECT * FROM training_candidates
+            ORDER BY ts DESC
+            LIMIT %s
+        """
+        cur.execute(query, (limit,))
+        rows = cur.fetchall()
+
+    return {"count": len(rows), "candidates": _to_builtin(rows)}
+
+
+@router.get("/regime/current")
+def current_regime():
+    """Returns current detected market regime"""
+    with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        # Get the most recent regime from training_candidates
+        query = """
+            SELECT regime, btc_regime, ts
+            FROM training_candidates
+            WHERE regime IS NOT NULL
+            ORDER BY ts DESC
+            LIMIT 1
+        """
+        cur.execute(query)
+        row = cur.fetchone()
+
+        if row:
+            return {
+                "regime": row["regime"],
+                "btc_regime": row["btc_regime"],
+                "detected_at": row["ts"],
+            }
+        else:
+            return {
+                "regime": "unknown",
+                "btc_regime": "unknown",
+                "detected_at": None,
+            }
 
 
 @router.get("/stats")
