@@ -4,10 +4,9 @@ import argparse
 import json
 import os
 import time
-import threading
 import html
 import logging
-from datetime import timezone
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 import psycopg2
@@ -20,7 +19,6 @@ from telegram_alerts import send_telegram_async
 load_dotenv()
 
 import config
-from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 DATABASE_URL = os.environ["DATABASE_URL"]
@@ -115,14 +113,14 @@ def fetch_since(symbol: str, start_ms: int, interval: str = "15m", limit: int = 
     # Determine if it's a futures pair (usually ends in USDT or has a specific format)
     # For Binance, futures klines are at /fapi/v1/klines
     is_futures = "USDT" in symbol # Simple heuristic
-    
+
     if is_futures:
         base_url = "https://fapi.binance.com"
         endpoint = "/fapi/v1/klines"
     else:
         base_url = "https://api.binance.com"
         endpoint = "/api/v3/klines"
-        
+
     url = f"{base_url}{endpoint}"
     params = {"symbol": symbol, "interval": interval, "startTime": start_ms, "limit": limit}
     r = requests.get(url, params=params, timeout=20)
@@ -206,12 +204,13 @@ def resolve_signal(sig: dict) -> tuple[str | None, float | None, dict | None]:
             if low <= tp2:
                 return "WIN", 2.1, _meta(exit_price=tp2)
 
-    return None, None, {"adverse_excursion": max_adv_pct}
+    # FIXED: was the undefined name `max_adv_pct` (NameError on every "still open" signal)
+    return None, None, {"adverse_excursion": max_adv_r}
 
 
 def run_once():
     expiry_threshold = datetime.now(timezone.utc) - timedelta(days=SIGNAL_EXPIRY_DAYS)
-    
+
     with db_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
@@ -227,16 +226,16 @@ def run_once():
     updates = 0
     expired = 0
     errors = 0
-    
+
     for row in rows:
         try:
             # 1. Define sig_ts correctly
             sig_ts = row["ts"]
             if sig_ts.tzinfo is None:
                 sig_ts = sig_ts.replace(tzinfo=timezone.utc)
-            
+
             outcome, r_mult, updates_meta = None, None, None
-            
+
             # 2. Check for absolute expiry ONLY for live execution. Simulated rows must process history.
             is_live = row.get("execution_source") == "live"
             if is_live and sig_ts < expiry_threshold:
@@ -250,7 +249,7 @@ def run_once():
             else:
                 # 3. Resolve using new Scale-out / Breakeven logic
                 outcome, r_mult, updates_meta = resolve_signal(row)
-            
+
             if outcome == "HIT_TP1" and updates_meta is not None:
                 # Persist partial state and MAE but keep outcome NULL to continue tracking for TP2
                 with db_conn() as conn, conn.cursor() as cur:
@@ -264,23 +263,56 @@ def run_once():
                     )
                     conn.commit()
                 log_event("INFO", "outcome_tracker", "scale_out_hit", {"signal_id": row["signal_id"], "pair": row["pair"]})
-                
+
                 # Send Telegram alert for scale-out
                 _send_scale_out_alert(row, updates_meta)
             elif outcome is not None:
                 # Final resolution: WIN or LOSS. Scaled-out winners remain WIN with a smaller R multiple.
+                meta = updates_meta or {}
+                exit_price = meta.get("exit_price") or row["entry"]
+                trace = row.get("reason_trace") or {}
                 with db_conn() as conn, conn.cursor() as cur:
+                    # FIXED: explicitly clear is_partial on terminal resolution so the
+                    # chk_partial_consistency constraint can never reject this UPDATE
                     cur.execute(
                         """
                         UPDATE signals
-                        SET outcome = %s, r_multiple = %s, adverse_excursion = %s, updated_at = NOW()
+                        SET outcome = %s, r_multiple = %s, adverse_excursion = %s,
+                            is_partial = FALSE, updated_at = NOW()
                         WHERE id = %s
                         """,
-                        (outcome, r_mult, updates_meta["adverse_excursion"] if updates_meta is not None else None, row["id"]),
+                        (outcome, r_mult, meta.get("adverse_excursion"), row["id"]),
+                    )
+
+                    # FIXED: mirror to paper_orders so the confidence gate, virtual
+                    # account, and training pipeline see resolved trades. signal_id
+                    # and intent_id are NOT NULL with no default on this table;
+                    # intent_id has no FK constraint so a synthetic uuid is safe here
+                    # since there's no real execution_intents row to reference.
+                    cur.execute(
+                        """
+                        INSERT INTO paper_orders (
+                            order_id, signal_id, intent_id, asset, side, entry, exit_price,
+                            outcome, r_multiple, status, fill_mode, regime_version,
+                            confidence_gate_eligible, reconstructed, research_only,
+                            fill_time, resolved_at, created_at
+                        ) VALUES (
+                            gen_random_uuid(), %s, gen_random_uuid(), %s, %s, %s, %s,
+                            %s, %s, 'CLOSED', 'paper', %s,
+                            TRUE, FALSE, FALSE,
+                            %s, NOW(), NOW()
+                        ) ON CONFLICT DO NOTHING
+                        """,
+                        (
+                            row["signal_id"], row["pair"], row["side"], float(row["entry"]), float(exit_price),
+                            outcome, float(r_mult),
+                            str(trace.get("market_regime", "paper")),
+                            row["ts"],
+                        ),
                     )
                     conn.commit()
                 updates += 1
-                
+
                 # Send Telegram alert for outcome
                 _send_outcome_alert(row, outcome, r_mult, updates_meta)
             else:
@@ -298,14 +330,13 @@ def run_once():
             log_event("ERROR", "outcome_tracker", "per_signal_error", {"signal_id": row["signal_id"], "error": str(e)})
 
     log_event("INFO", "outcome_tracker", "tracker_run_complete", {
-        "checked": len(rows), 
-        "updated": updates, 
+        "checked": len(rows),
+        "updated": updates,
         "expired": expired,
         "errors": errors
     })
 
 
-import logging
 from logging.handlers import RotatingFileHandler
 
 # Log configuration
